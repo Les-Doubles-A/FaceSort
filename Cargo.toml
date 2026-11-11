@@ -1,0 +1,51 @@
+[package]
+name = "facesort"
+version = "0.1.0"
+edition = "2024"
+description = "Range des photos dans un dossier par personne, par détection et reconnaissance faciale locales."
+license = "MIT"
+
+[lib]
+name = "facesort"
+path = "src/lib.rs"
+
+[[bin]]
+name = "FaceSort"
+path = "src/bin/gui/main.rs"
+
+[[bin]]
+name = "facesort"
+path = "src/bin/cli.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+csv = "1.4.0"
+eframe = "0.37"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ort = "=2.0.0-rc.15"
+rayon = "1.12.0"
+rfd = "0.18"
+rusqlite = { version = "0.42", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+thiserror = "2.0.21"
+walkdir = "2.5.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+# Les tests d'intégration exécutent l'inférence : sans optimisation, ONNX Runtime
+# reste rapide (code natif), mais le pré/post-traitement Rust gagne à être optimisé.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

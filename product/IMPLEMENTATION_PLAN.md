@@ -1,0 +1,185 @@
+# FaceSort - Plan d'implémentation
+
+> Version 1 · 2026-11-11 · Pour confier une tâche à Claude Code : « Implémente T3 de product/IMPLEMENTATION_PLAN.md » ou `/idea-to-product build T3`
+
+## 1. Décisions à prendre avant de coder
+
+| ID | Décision | Options | Recommandation | Bloque |
+|---|---|---|---|---|
+| D1 | Modèle de détection | YuNet (MIT) ; RetinaFace InsightFace (non commercial, recherche) | YuNet, RetinaFace reporté en F10 si T11 montre un manque de rappel (ADR-1) | T2 |
+| D2 | Photos de test | Images libres de droits versionnées ; photos personnelles non versionnées (`fixtures-private/`) ; les deux | Les deux : quelques images libres pour la CI si un jeu adapté existe, photos personnelles pour l'évaluation T11 | T2, T4, T11 |
+| D3 | Variante YuNet | `2023mar` (entrée fixe) ; `2026may` (entrée dynamique) | Essai court en T2 : garder celle qui s'exécute avec `ort` et donne les cadres attendus sur `fixtures/basic` | T2 |
+
+## 2. Étapes
+
+1. **Fondations** - projet, outillage de test, schéma de base, validation des noms (T1).
+2. **Parcours principal, moteur** - détection, empreintes, scan en CLI (T2 à T4), puis regroupement, reconnaissance, opérations sur les personnes, tri (T5 à T8).
+3. **Parcours principal, GUI** - écrans E1 à E3 (T9, T10).
+4. **Validation du MVP** - évaluation de la qualité et calibration des seuils, paquet portable, scénarios manuels (T11, T12).
+
+## 3. Tranche 1 - premier résultat testable
+
+- **Ce que l'utilisateur pourra faire à la fin** : lancer `facesort scan D:\Photos\2024` et lire « 812 photos analysées, 1 455 visages, 3 erreurs, 1,1 s/photo », puis `facesort status`. Valide H3 et donne une première lecture de H2.
+- **Tâches incluses** : T1, T2, T3, T4.
+- **Comment le tester** : `cargo test` ; puis scénario M1 sur un vrai dossier.
+
+## 4. Tâches
+
+### T1 - Fondations du projet
+
+- **Objectif** : squelette compilable et testé.
+- **Dépend de** : aucune.
+- **Fichiers ou composants** : `Cargo.toml`, `src/lib.rs`, `src/store.rs`, `src/names.rs`, `src/bin/cli.rs`, `src/bin/gui/main.rs`, `README.md`, `.gitignore` (`/target`, `models/*.onnx`, `fixtures-private/`).
+- **À faire** :
+  1. `cargo init`, `git init`, edition 2024, lib + bins `FaceSort` et `facesort` (modèle FontLicenseClassifier).
+  2. Ajouter les dépendances avec `cargo add` (versions réelles, pas devinées) ; `ort = "=2.0.0-rc.15"`.
+  3. `store` : ouverture de la base (`--db` ou `%LOCALAPPDATA%\FaceSort\facesort.db`), WAL, schéma v1, `user_version`.
+  4. `names::validate_person_name` (règles F3).
+  5. CLI : sous-commandes vides `scan`, `sort`, `status` avec `--help`.
+  6. Vérifier que `ort` récupère et copie la DLL ONNX Runtime sous Windows (note dans README).
+- **Tests** : unitaires `names` (valides, `Tom/Léa`, `CON`, `com1`, espaces, 65 caractères) ; `store` crée et rouvre une base temporaire.
+- **Terminé quand** : `cargo test` et `cargo clippy -- -D warnings` passent ; `facesort --help` liste les trois commandes.
+- **Couvre** : F3, F6, AC-F3-3
+- **Statut** : à faire
+
+### T2 - Modèles et détection
+
+- **Objectif** : détecter les visages d'une image.
+- **Dépend de** : T1, D1, D2, D3.
+- **Fichiers ou composants** : `scripts/fetch-models.ps1`, `models/SHA256SUMS`, `src/detect.rs`, `src/scan.rs` (décodage).
+- **À faire** :
+  1. Script de téléchargement depuis opencv_zoo (URL exactes à vérifier dans le dépôt), calcul et écriture des SHA-256.
+  2. Contrôle des SHA-256 au chargement.
+  3. Décodage `image` avec `Limits`, orientation EXIF, réduction à 1 600 px.
+  4. Trait `FaceDetector` ; implémentation YuNet avec `ort` : pré-traitement, lecture des sorties, post-traitement (décodage des cadres si nécessaire, NMS) en suivant l'implémentation de référence opencv_zoo.
+- **Tests** : nombre de visages sur `fixtures/basic` contre `expected.json` ; fixture EXIF orientation 6 vs redressée ; modèle au mauvais hash refusé.
+- **Terminé quand** : les tests passent ; un exemple `cargo run --example detect -- photo.jpg` écrit une image annotée vérifiée à l'oeil.
+- **Couvre** : F1, AC-F1-5
+- **Statut** : à faire
+
+### T3 - Alignement et empreintes
+
+- **Objectif** : produire une empreinte comparable par visage.
+- **Dépend de** : T2.
+- **Fichiers ou composants** : `src/align.rs`, `src/embed.rs`.
+- **À faire** :
+  1. Lire les métadonnées d'entrée/sortie de SFace avec `ort` (taille, dimension) et les consigner dans le README.
+  2. Similarité 5 points vers le gabarit 112x112, warp bilinéaire.
+  3. Trait `FaceEmbedder`, implémentation SFace, normalisation L2.
+- **Tests** : alignement d'un jeu de points connu (erreur < 0,5 px) ; deux photos d'une même personne plus similaires entre elles qu'avec une autre personne sur `fixtures/people3`.
+- **Terminé quand** : tests verts ; la similarité moyenne intra-personne dépasse la moyenne inter-personnes sur `fixtures/people3`.
+- **Couvre** : F1, F4
+- **Statut** : à faire
+
+### T4 - Scan complet en CLI
+
+- **Objectif** : parcours P1, étape « analyse », en ligne de commande.
+- **Dépend de** : T3.
+- **Fichiers ou composants** : `src/scan.rs`, `src/store.rs`, `src/bin/cli.rs`.
+- **À faire** :
+  1. Parcours `walkdir`, filtre d'extensions, comptage des ignorés.
+  2. Détection des inchangés (chemin, taille, mtime).
+  3. Pipeline parallèle `rayon` (une session `ort` par thread de travail), écriture SQLite par lots en transaction, vignettes 96 px.
+  4. Erreurs par fichier collectées sans arrêter le scan ; annulation par drapeau partagé.
+  5. `facesort scan`, `facesort status [--json]`, codes de sortie 0/1/2/3, temps moyen par photo.
+- **Tests** : intégration `tests/scan.rs` (fixtures basic, rescan, JPEG tronqué, extensions ignorées) ; `tests/cli.rs` (codes de sortie, JSON valide).
+- **Terminé quand** : tests verts ; scénario M1 exécuté sur un vrai dossier et le temps par photo noté (H3).
+- **Couvre** : F1, F6, AC-F1-1, AC-F1-2, AC-F1-3, AC-F1-4, AC-F6-1, AC-F6-2, AC-F6-3
+- **Statut** : à faire
+
+### T5 - Regroupement
+
+- **Objectif** : groupes de visages non attribués.
+- **Dépend de** : T1 (empreintes synthétiques), T4 pour l'intégration.
+- **Fichiers ou composants** : `src/cluster.rs`.
+- **À faire** : DBSCAN cosinus, `min_samples = 2`, ordre stable par identifiant de visage, matrice de similarité parallélisée, respect des exclusions, écriture de `cluster_id`.
+- **Tests** : synthétiques (3 nuages bien séparés, bruit isolé, déterminisme, 5 000 empreintes < 10 s en release) ; `fixtures/people3`.
+- **Terminé quand** : tests verts.
+- **Couvre** : F2, AC-F2-1, AC-F2-2, AC-F2-3, AC-F2-4
+- **Statut** : à faire
+
+### T6 - Reconnaissance
+
+- **Objectif** : attribuer les visages des personnes connues.
+- **Dépend de** : T5, T7.
+- **Fichiers ou composants** : `src/recognize.rs`, appel en fin de scan avant le regroupement.
+- **À faire** : similarité max contre visages confirmés, seuil, marge 0,05, marquage `auto`, exclusions respectées.
+- **Tests** : synthétiques (attribution, inconnu, ambiguïté) ; intégration `people3` puis `people3_new`.
+- **Terminé quand** : tests verts.
+- **Couvre** : F4, AC-F4-1, AC-F4-2, AC-F4-3
+- **Statut** : à faire
+
+### T7 - Opérations sur les personnes
+
+- **Objectif** : nommer, fusionner, retirer, ignorer, dans la lib.
+- **Dépend de** : T1.
+- **Fichiers ou composants** : `src/store.rs` (ou `src/persons.rs`).
+- **À faire** : `name_cluster`, `merge_persons`, `remove_face(face, person)` avec exclusion, `ignore_cluster` ; détection de nom existant insensible à la casse.
+- **Tests** : unitaires sur base temporaire, dont exclusion persistante après regroupement.
+- **Terminé quand** : tests verts.
+- **Couvre** : F3, AC-F3-2, AC-F3-4
+- **Statut** : à faire
+
+### T8 - Tri par copie
+
+- **Objectif** : produire `Destination/Prénom/`.
+- **Dépend de** : T7.
+- **Fichiers ou composants** : `src/sort.rs`, `src/bin/cli.rs`.
+- **À faire** : plan de tri (copies, collisions, taille, espace libre), refus d'une destination dans une source, exécution atomique avec conservation de la mtime, journal CSV, `facesort sort [--dry-run] [--no-unknown]`.
+- **Tests** : `tests/sort.rs` dans `TempDir` : multi-personnes avec SHA-256, `_Inconnus/`, collision différente et identique, second tri à 0 copie, destination en lecture seule, journal, dry-run sans écriture.
+- **Terminé quand** : tests verts.
+- **Couvre** : F5, F6, AC-F5-1, AC-F5-2, AC-F5-3, AC-F5-4, AC-F5-5, AC-F5-6, AC-F6-2
+- **Statut** : à faire
+
+### T9 - GUI : écran Analyse (E1)
+
+- **Objectif** : scan depuis la fenêtre.
+- **Dépend de** : T4.
+- **Fichiers ou composants** : `src/bin/gui/`.
+- **À faire** : sélection de dossier `rfd`, scan dans un thread, progression via canal, annulation, résumé et liste d'erreurs, état vide.
+- **Tests** : logique de progression testée dans la lib ; vérification manuelle M2.
+- **Terminé quand** : M2 étape 1 réussie.
+- **Couvre** : F1
+- **Statut** : à faire
+
+### T10 - GUI : écrans Personnes et Tri (E2, E3)
+
+- **Objectif** : nommage et tri à la souris et au clavier.
+- **Dépend de** : T6, T7, T8, T9.
+- **Fichiers ou composants** : `src/bin/gui/screens.rs`.
+- **À faire** : grille de groupes et vignettes (textures chargées à la demande), champ prénom avec messages de validation, fusion, retrait, ignorer ; écran Tri avec aperçu et progression ; navigation clavier et focus visible.
+- **Tests** : scénarios manuels M2 et M3 ; AC-F6-4 par test d'intégration (lib nomme, CLI lit).
+- **Terminé quand** : M2 et M3 réussis.
+- **Couvre** : F3, F5, F6, AC-F3-1, AC-F3-5, AC-F6-4
+- **Statut** : à faire
+
+### T11 - Évaluation et calibration des seuils
+
+- **Objectif** : valider H2 et H4, fixer les seuils de regroupement et de reconnaissance.
+- **Dépend de** : T6, D2.
+- **Fichiers ou composants** : `examples/eval.rs`, `fixtures-private/eval/` (200 photos, `labels.csv` photo -> prénoms).
+- **À faire** : balayage des seuils, mesure de la précision et du rappel du tri, nombre de corrections nécessaires ; seuils retenus inscrits dans le code avec leur mesure.
+- **Tests** : l'exemple lui-même ; résultats notés dans README.
+- **Terminé quand** : précision au moins 95 % et rappel au moins 85 % atteints, ou décision consignée (F10, F8, ou seuils plus prudents).
+- **Couvre** : F2, F4
+- **Statut** : à faire
+
+### T12 - Paquet portable et validation
+
+- **Objectif** : dossier utilisable hors de l'environnement de dev.
+- **Dépend de** : T10, T11.
+- **Fichiers ou composants** : `scripts/package.ps1`, `README.md`.
+- **À faire** : assembler exe, DLL, modèles ; lancer depuis un autre dossier ; README (installation, chemin de la base, suppression des données).
+- **Tests** : scénario M4 et relecture de `--help`.
+- **Terminé quand** : M4 réussi sur la machine de l'utilisateur.
+- **Couvre** : F5, F6, AC-F5-5, AC-F6-1
+- **Statut** : à faire
+
+## 5. Peut attendre
+
+| Élément | Pourquoi attendre | Déclencheur |
+|---|---|---|
+| DirectML (F8) | CPU peut suffire | H3 échoue |
+| HEIC/RAW (F9) | Proportion inconnue | AC-F1-4 montre plus de 10 % ignorés |
+| RetinaFace (F10) | Licence, qualité YuNet non mesurée | T11 insuffisant |
+| Installeur, signature | Usage personnel | Diffusion |

@@ -1,0 +1,15 @@
+{
+ "faces_per_file": {
+  "obama_02.jpg": 4,
+  "obama_11.jpg": 2,
+  "obama_10.jpg": 2,
+  "harris_19.jpg": 1,
+  "biden_13.jpg": 1,
+  "harris_13.jpg": 1,
+  "armstrong_01.jpg": 1,
+  "noface_00.jpg": 0,
+  "noface_01.jpg": 0,
+  "noface_02.jpg": 0
+ },
+ "total_faces": 12
+}
