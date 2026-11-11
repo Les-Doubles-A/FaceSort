@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS faces(
     person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL,
     assignment TEXT NOT NULL DEFAULT 'none' CHECK(assignment IN ('none','manual','auto')),
     cluster_id INTEGER,
-    ignored INTEGER NOT NULL DEFAULT 0
+    ignored INTEGER NOT NULL DEFAULT 0,
+    quality REAL
 );
 CREATE INDEX IF NOT EXISTS faces_photo ON faces(photo_id);
 CREATE INDEX IF NOT EXISTS faces_person ON faces(person_id);
@@ -103,6 +104,27 @@ pub struct FaceInfo {
     pub photo_path: PathBuf,
     pub person_id: Option<i64>,
     pub assignment: Assignment,
+    /// Note 0..1 (absente pour les visages analysés avant le schéma 2).
+    pub quality: Option<f32>,
+}
+
+/// Visage enregistré : de quoi recalculer sa qualité sans nouvelle détection.
+#[derive(Clone, Debug)]
+pub struct StoredFace {
+    pub id: i64,
+    pub photo: PathBuf,
+    pub landmarks: [[f32; 2]; 5],
+    /// Plus petit côté du cadre, en pixels de l'image d'origine.
+    pub size: f32,
+    pub det_score: f32,
+}
+
+/// Empreinte d'un visage et sa note de qualité.
+#[derive(Clone, Debug)]
+pub struct FaceEmb {
+    pub id: i64,
+    pub embedding: Vec<f32>,
+    pub quality: Option<f32>,
 }
 
 /// Résultat de la tentative de nommage d'un groupe.
@@ -154,6 +176,13 @@ impl Store {
             )));
         }
         conn.execute_batch(SCHEMA)?;
+        // Schéma 1 -> 2 : note de qualité des visages (ajout de colonne, sans perte).
+        let has_quality: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('faces') WHERE name='quality'")?
+            .exists([])?;
+        if !has_quality {
+            conn.execute("ALTER TABLE faces ADD COLUMN quality REAL", [])?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self { conn, path: path.to_path_buf() })
     }
@@ -185,6 +214,14 @@ impl Store {
                 self.set_meta("detector_model", &ids.detector)
             }
         }
+    }
+
+    /// Modèle de reconnaissance qui a produit les empreintes de la base.
+    pub fn embedder_kind(&self) -> Result<Option<crate::embed::EmbedderKind>> {
+        use crate::embed::EmbedderKind;
+        Ok(self.meta("embedder_model")?.and_then(|m| {
+            [EmbedderKind::SFace, EmbedderKind::AuraFace].into_iter().find(|k| m.starts_with(k.file()))
+        }))
     }
 
     // ---------- photos ----------
@@ -243,7 +280,7 @@ impl Store {
         let photo_id = Self::upsert_photo(&tx, path, size, mtime, Some(sha), Some(dims), None)?;
         {
             let mut st = tx.prepare(
-                "INSERT INTO faces(photo_id, x, y, w, h, score, landmarks, embedding, thumb) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                "INSERT INTO faces(photo_id, x, y, w, h, score, landmarks, embedding, thumb, quality) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             )?;
             for f in faces {
                 let d = &f.detection;
@@ -257,7 +294,8 @@ impl Store {
                     d.score,
                     embed::to_blob(&lm),
                     embed::to_blob(&f.embedding),
-                    f.thumb_jpeg
+                    f.thumb_jpeg,
+                    f.quality.score()
                 ])?;
             }
         }
@@ -289,21 +327,117 @@ impl Store {
         })
     }
 
-    /// Visages non attribués et non ignorés : (id, empreinte).
-    pub fn unassigned_embeddings(&self) -> Result<Vec<(i64, Vec<f32>)>> {
-        let mut st = self
-            .conn
-            .prepare("SELECT id, embedding FROM faces WHERE person_id IS NULL AND ignored=0 ORDER BY id")?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, embed::from_blob(&r.get::<_, Vec<u8>>(1)?))))?;
+    fn face_embs(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<FaceEmb>> {
+        let mut st = self.conn.prepare(sql)?;
+        let rows = st.query_map(params, |r| {
+            Ok(FaceEmb { id: r.get(0)?, embedding: embed::from_blob(&r.get::<_, Vec<u8>>(1)?), quality: r.get(2)? })
+        })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    /// Visages confirmés (nommés par l'utilisateur) : (personne, empreinte).
+    /// Visages non attribués et non ignorés.
+    pub fn unassigned_embeddings(&self) -> Result<Vec<FaceEmb>> {
+        self.face_embs(
+            "SELECT id, embedding, quality FROM faces WHERE person_id IS NULL AND ignored=0 ORDER BY id",
+            [],
+        )
+    }
+
+    /// Visages d'un groupe non nommé.
+    pub fn group_embeddings(&self, cluster_id: i64) -> Result<Vec<FaceEmb>> {
+        self.face_embs(
+            "SELECT id, embedding, quality FROM faces WHERE cluster_id=?1 AND person_id IS NULL AND ignored=0 ORDER BY id",
+            [cluster_id],
+        )
+    }
+
+    /// Références de la reconnaissance : visages confirmés (nommés par
+    /// l'utilisateur) de bonne qualité ; pour une personne qui n'en a aucun
+    /// de bonne qualité, tous ses visages confirmés.
     pub fn confirmed_embeddings(&self) -> Result<Vec<(i64, Vec<f32>)>> {
-        let mut st =
-            self.conn.prepare("SELECT person_id, embedding FROM faces WHERE assignment='manual' ORDER BY id")?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, embed::from_blob(&r.get::<_, Vec<u8>>(1)?))))?;
+        let mut st = self
+            .conn
+            .prepare("SELECT person_id, embedding, quality FROM faces WHERE assignment='manual' ORDER BY id")?;
+        let rows = st.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, embed::from_blob(&r.get::<_, Vec<u8>>(1)?), r.get::<_, Option<f32>>(2)?))
+        })?;
+        let all: Vec<_> = rows.collect::<std::result::Result<_, _>>()?;
+        let has_good: HashSet<i64> =
+            all.iter().filter(|(_, _, q)| crate::quality::is_good_score(*q)).map(|(p, _, _)| *p).collect();
+        Ok(all
+            .into_iter()
+            .filter(|(p, _, q)| crate::quality::is_good_score(*q) || !has_good.contains(p))
+            .map(|(p, e, _)| (p, e))
+            .collect())
+    }
+
+    /// Visages sans note de qualité (analysés avant le schéma 2).
+    pub fn faces_missing_quality(&self) -> Result<Vec<StoredFace>> {
+        let mut st = self.conn.prepare(
+            "SELECT f.id, p.path, f.landmarks, MIN(f.w, f.h), f.score FROM faces f JOIN photos p ON p.id=f.photo_id
+             WHERE f.quality IS NULL ORDER BY p.path",
+        )?;
+        let rows = st.query_map([], |r| {
+            let lm = embed::from_blob(&r.get::<_, Vec<u8>>(2)?);
+            let mut pts = [[0f32; 2]; 5];
+            for (k, p) in pts.iter_mut().enumerate() {
+                *p = [lm.get(2 * k).copied().unwrap_or(0.0), lm.get(2 * k + 1).copied().unwrap_or(0.0)];
+            }
+            Ok(StoredFace {
+                id: r.get(0)?,
+                photo: PathBuf::from(r.get::<_, String>(1)?),
+                landmarks: pts,
+                size: r.get(3)?,
+                det_score: r.get(4)?,
+            })
+        })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn set_quality(&mut self, values: &[(i64, f32)]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut st = tx.prepare("UPDATE faces SET quality=?2 WHERE id=?1")?;
+            for (f, q) in values {
+                st.execute(params![f, q])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Si les seuils ont changé depuis la dernière fois, remet les visages
+    /// attribués automatiquement dans « non attribué » (ils seront réévalués
+    /// avec les nouveaux seuils). Les choix de l'utilisateur ne sont pas touchés.
+    /// Renvoie le nombre de visages remis en jeu.
+    pub fn reset_auto_if_thresholds_changed(&mut self, revision: i64) -> Result<usize> {
+        let current = self.meta("thresholds_rev")?.and_then(|v| v.parse::<i64>().ok());
+        if current == Some(revision) {
+            return Ok(0);
+        }
+        let n = self
+            .conn
+            .execute("UPDATE faces SET person_id=NULL, assignment='none', cluster_id=NULL WHERE assignment='auto'", [])?;
+        self.set_meta("thresholds_rev", &revision.to_string())?;
+        Ok(n)
+    }
+
+    /// Prochain numéro de groupe libre.
+    pub fn next_cluster_id(&self) -> Result<i64> {
+        Ok(self.conn.query_row("SELECT COALESCE(MAX(cluster_id), -1) + 1 FROM faces", [], |r| r.get(0))?)
+    }
+
+    /// Change le groupe de quelques visages (sans toucher aux autres groupes).
+    pub fn relabel(&mut self, labels: &[(i64, Option<i64>)]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut st = tx.prepare("UPDATE faces SET cluster_id=?2 WHERE id=?1 AND person_id IS NULL")?;
+            for (face, label) in labels {
+                st.execute(params![face, label])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn exclusions(&self) -> Result<HashMap<i64, HashSet<i64>>> {
@@ -387,7 +521,7 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT f.id, p.path, f.person_id, f.assignment FROM faces f JOIN photos p ON p.id=f.photo_id WHERE f.id=?1",
+                "SELECT f.id, p.path, f.person_id, f.assignment, f.quality FROM faces f JOIN photos p ON p.id=f.photo_id WHERE f.id=?1",
                 [face_id],
                 |r| {
                     let a: String = r.get(3)?;
@@ -400,6 +534,7 @@ impl Store {
                             "auto" => Assignment::Auto,
                             _ => Assignment::None,
                         },
+                        quality: r.get(4)?,
                     })
                 },
             )
@@ -582,6 +717,13 @@ pub(crate) mod tests {
         AnalyzedFace {
             detection: Detection { bbox: [0.0, 0.0, 50.0, 50.0], landmarks: [[0.0; 2]; 5], score: 0.95 },
             embedding: emb,
+            quality: crate::quality::FaceQuality {
+                brightness: 128.0,
+                contrast: 50.0,
+                sharpness: 200.0,
+                size: 150.0,
+                det_score: 0.97,
+            },
             thumb_jpeg: vec![],
         }
     }
@@ -720,6 +862,40 @@ pub(crate) mod tests {
         assert!(!rows[0].has_unknown);
         assert!(rows[1].persons.is_empty() && rows[1].has_unknown);
         let _ = f2;
+    }
+
+    #[test]
+    fn auto_assignments_are_reset_once_when_thresholds_change() {
+        let (_d, mut s) = mem_store();
+        let f = add_photo(&mut s, "a.jpg", 2);
+        let lea = s.create_person("Léa").unwrap();
+        s.assign_faces(&f[..1], lea, Assignment::Manual).unwrap();
+        s.assign_faces(&f[1..], lea, Assignment::Auto).unwrap();
+        assert_eq!(s.reset_auto_if_thresholds_changed(2).unwrap(), 1);
+        assert_eq!(s.person_faces(lea).unwrap(), vec![f[0]], "le choix manuel reste");
+        s.assign_faces(&f[1..], lea, Assignment::Auto).unwrap();
+        assert_eq!(s.reset_auto_if_thresholds_changed(2).unwrap(), 0, "une seule fois par révision");
+    }
+
+    #[test]
+    fn schema_v1_database_is_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("v1.db");
+        {
+            let c = Connection::open(&p).unwrap();
+            c.execute_batch(&SCHEMA.replace(",\n    quality REAL", "")).unwrap();
+            c.execute("INSERT INTO photos(path,size,mtime,scanned_at) VALUES('a.jpg',1,1,1)", []).unwrap();
+            c.execute(
+                "INSERT INTO faces(photo_id,x,y,w,h,score,landmarks,embedding) VALUES(1,0,0,50,50,0.9,x'00',x'0000803f')",
+                [],
+            )
+            .unwrap();
+            c.pragma_update(None, "user_version", 1).unwrap();
+        }
+        let s = Store::open(&p).unwrap();
+        assert_eq!(s.stats().unwrap().faces, 1, "données conservées");
+        assert_eq!(s.faces_missing_quality().unwrap().len(), 1);
+        assert_eq!(s.unassigned_embeddings().unwrap()[0].quality, None);
     }
 
     #[test]

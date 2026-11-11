@@ -5,7 +5,7 @@
 
 use clap::{Parser, Subcommand};
 use facesort::engine::Engine;
-use facesort::scan::{self, ScanOptions};
+use facesort::scan;
 use facesort::sort::{self, SortOptions};
 use facesort::store::{self, Store};
 use std::io::{IsTerminal, Write};
@@ -114,7 +114,7 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
                 &mut store,
                 &mut engine,
                 &dirs,
-                ScanOptions::default(),
+                None,
                 |p| {
                     if show {
                         eprint!("\r{}/{} photos, {} visages, {} erreurs   ", p.done, p.total, p.faces, p.errors);

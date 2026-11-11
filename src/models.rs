@@ -1,11 +1,22 @@
 //! Localisation et vérification (SHA-256) des modèles ONNX.
 
+use crate::embed::EmbedderKind;
 use crate::{Error, Result, util};
 use std::path::{Path, PathBuf};
 
 pub const DETECTOR_FILE: &str = "face_detection_yunet_2026may.onnx";
-pub const EMBEDDER_FILE: &str = "face_recognition_sface_2021dec.onnx";
 pub const SUMS_FILE: &str = "SHA256SUMS";
+/// Modèle de reconnaissance par défaut (voir README, « Choix du modèle »).
+pub const DEFAULT_EMBEDDER: EmbedderKind = EmbedderKind::SFace;
+
+/// Modèle choisi : variable `FACESORT_EMBEDDER` (`sface` ou `auraface`), sinon le défaut.
+pub fn selected_embedder() -> Result<EmbedderKind> {
+    match std::env::var("FACESORT_EMBEDDER") {
+        Ok(v) if !v.trim().is_empty() => EmbedderKind::parse(&v)
+            .ok_or_else(|| Error::Invalid(format!("FACESORT_EMBEDDER={v} inconnu (attendu : sface ou auraface)"))),
+        _ => Ok(DEFAULT_EMBEDDER),
+    }
+}
 
 /// Identité des modèles utilisés, enregistrée dans la base : des empreintes
 /// produites par un autre modèle ne sont pas comparables.
@@ -29,7 +40,7 @@ pub fn find_models_dir() -> Option<PathBuf> {
     }
     candidates.push(PathBuf::from("models"));
     candidates.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/models")));
-    candidates.into_iter().find(|d| d.join(DETECTOR_FILE).is_file() && d.join(EMBEDDER_FILE).is_file())
+    candidates.into_iter().find(|d| d.join(DETECTOR_FILE).is_file() && d.join(SUMS_FILE).is_file())
 }
 
 fn expected_sums(dir: &Path) -> Result<Vec<(String, String)>> {
@@ -44,8 +55,8 @@ fn expected_sums(dir: &Path) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-/// Vérifie les deux modèles contre `SHA256SUMS` et renvoie leur identité.
-pub fn verify(dir: &Path) -> Result<ModelIds> {
+/// Vérifie le détecteur et le modèle de reconnaissance contre `SHA256SUMS`.
+pub fn verify(dir: &Path, embedder: EmbedderKind) -> Result<ModelIds> {
     let sums = expected_sums(dir)?;
     let check = |file: &str| -> Result<String> {
         let expected = sums
@@ -54,13 +65,16 @@ pub fn verify(dir: &Path) -> Result<ModelIds> {
             .map(|(h, _)| h.clone())
             .ok_or_else(|| Error::Model(format!("{file} absent de {SUMS_FILE}")))?;
         let path = dir.join(file);
+        if !path.is_file() {
+            return Err(Error::Model(format!("{} introuvable", path.display())));
+        }
         let actual = util::sha256_file(&path).map_err(|e| Error::Model(format!("{} ({e})", path.display())))?;
         if actual != expected {
             return Err(Error::Model(format!("{file} : empreinte SHA-256 inattendue")));
         }
         Ok(format!("{file}#{}", &actual[..16]))
     };
-    Ok(ModelIds { detector: check(DETECTOR_FILE)?, embedder: check(EMBEDDER_FILE)? })
+    Ok(ModelIds { detector: check(DETECTOR_FILE)?, embedder: check(embedder.file())? })
 }
 
 #[cfg(test)]
@@ -76,9 +90,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::copy(src.join(SUMS_FILE), tmp.path().join(SUMS_FILE)).unwrap();
         std::fs::copy(src.join(DETECTOR_FILE), tmp.path().join(DETECTOR_FILE)).unwrap();
-        std::fs::write(tmp.path().join(EMBEDDER_FILE), b"not a model").unwrap();
-        let err = verify(tmp.path()).unwrap_err().to_string();
+        let file = EmbedderKind::SFace.file();
+        std::fs::write(tmp.path().join(file), b"not a model").unwrap();
+        let err = verify(tmp.path(), EmbedderKind::SFace).unwrap_err().to_string();
         assert!(err.contains("modèle manquant ou modifié"), "{err}");
-        assert!(verify(&src).is_ok());
+        assert!(verify(&src, EmbedderKind::SFace).is_ok());
     }
 }

@@ -5,21 +5,35 @@
 //! devance la deuxième d'au moins la marge ; sinon il reste non attribué.
 //! Les visages « auto » ne servent jamais de référence (ADR-3).
 
-use crate::embed::cosine;
+use crate::embed::{EmbedderKind, cosine};
+use crate::quality::is_good_score;
 use crate::store::{Assignment, Store};
 use crate::{Result, thresholds};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RecognizeParams {
     pub threshold: f32,
     pub margin: f32,
+    /// Seuil relevé pour un visage de mauvaise qualité (sombre, flou, petit…).
+    pub low_quality_penalty: f32,
+}
+
+impl RecognizeParams {
+    pub fn for_kind(kind: EmbedderKind) -> Self {
+        let t = thresholds::for_kind(kind);
+        Self { threshold: t.recognition, margin: t.margin, low_quality_penalty: t.low_quality_penalty }
+    }
+
+    fn for_quality(self, good: bool) -> Self {
+        if good { self } else { Self { threshold: self.threshold + self.low_quality_penalty, ..self } }
+    }
 }
 
 impl Default for RecognizeParams {
     fn default() -> Self {
-        Self { threshold: thresholds::RECOGNITION, margin: thresholds::AMBIGUITY_MARGIN }
+        Self::for_kind(crate::models::DEFAULT_EMBEDDER)
     }
 }
 
@@ -65,7 +79,10 @@ pub fn recognize_unassigned(store: &mut Store, p: RecognizeParams) -> Result<usi
     let faces = store.unassigned_embeddings()?;
     let matches: Vec<(i64, i64)> = faces
         .par_iter()
-        .filter_map(|(id, emb)| best_match(emb, &refs, exclusions.get(id), p).map(|person| (*id, person)))
+        .filter_map(|f| {
+            let fp = p.for_quality(is_good_score(f.quality));
+            best_match(&f.embedding, &refs, exclusions.get(&f.id), fp).map(|person| (f.id, person))
+        })
         .collect();
     let mut by_person: HashMap<i64, Vec<i64>> = HashMap::new();
     for (face, person) in matches {
@@ -114,7 +131,7 @@ mod tests {
     // AC-F4-3
     #[test]
     fn ambiguous_margin() {
-        let p = RecognizeParams { threshold: 0.4, margin: 0.05 };
+        let p = RecognizeParams { threshold: 0.4, margin: 0.05, low_quality_penalty: 0.1 };
         // Références orthogonales construites à la main : similarités exactes.
         let mut e1 = vec![0f32; 4];
         e1[0] = 1.0;
@@ -128,6 +145,15 @@ mod tests {
         assert_eq!(best_match(&face(0.60, 0.57), &r, None, p), None, "écart 0,03 < 0,05");
         assert_eq!(best_match(&face(0.60, 0.50), &r, None, p), Some(1), "écart 0,10");
         assert_eq!(best_match(&face(0.30, 0.10), &r, None, p), None, "sous le seuil");
+    }
+
+    #[test]
+    fn low_quality_needs_higher_similarity() {
+        let p = RecognizeParams { threshold: 0.4, margin: 0.05, low_quality_penalty: 0.1 };
+        let r = vec![(1, vec![1.0, 0.0, 0.0])];
+        let face = vec![0.45, (1.0f32 - 0.45 * 0.45).sqrt(), 0.0];
+        assert_eq!(best_match(&face, &r, None, p.for_quality(true)), Some(1));
+        assert_eq!(best_match(&face, &r, None, p.for_quality(false)), None);
     }
 
     #[test]

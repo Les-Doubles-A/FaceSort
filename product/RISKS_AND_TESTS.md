@@ -6,7 +6,7 @@
 
 | ID | Risque | Type | Probabilité | Impact | Prévention | Repli |
 |---|---|---|---|---|---|---|
-| R1 | Qualité YuNet/SFace insuffisante (profils, enfants, faible lumière, ressemblances familiales) | Technique | Moyenne | Fort | Évaluation T11 avant la GUI complète, seuils prudents, correction manuelle (F3) | RetinaFace/ArcFace en option pour usage personnel (F10), après relecture de leur licence |
+| R1 | Qualité YuNet/SFace insuffisante (profils, enfants, faible lumière, ressemblances familiales). **Constaté le 2026-11-11 par l'utilisateur** : mélanges de personnes, surtout des femmes et des photos mal éclairées | Technique | Forte | Fort | Note de qualité par visage ; un visage médiocre ne relie pas deux groupes et sert peu de référence ; seuils resserrés ; « Séparer ce groupe » ; mesure par `eval` | AuraFace-v1 (Apache 2.0) déjà intégré, choix par mesure ; RetinaFace/ArcFace (non commercial) en dernier recours |
 | R2 | API `ort` en version rc qui change | Technique | Moyenne | Moyen | Version exacte épinglée (ADR-2), modèles derrière des traits | Rester sur rc.15 ; adapter `detect.rs`/`embed.rs` seulement |
 | R3 | Post-traitement YuNet mal reproduit (cadres décalés) | Technique | Moyenne | Fort | Suivre l'implémentation de référence opencv_zoo, image annotée en T2 | Variante de modèle avec post-traitement intégré (D3) |
 | R4 | Scan trop lent sur CPU | Technique | Moyenne | Moyen | Réduction 1 600 px, parallélisme, incrémental | DirectML (F8), résolution plus faible |
@@ -22,7 +22,7 @@
 | ID | Hypothèse | Comment la vérifier | Quand | Ce qu'on fait si elle est fausse |
 |---|---|---|---|---|
 | H1 | Le besoin est réel | Usage sur deux semaines | Après T12 | Arrêter ou garder comme projet d'apprentissage |
-| H2 | Qualité YuNet + SFace suffisante | T11 sur 200 photos annotées | Après T6 | F10, ou seuils plus prudents et plus de nommage manuel |
+| H2 | Qualité YuNet + SFace suffisante | `eval` (sous-dossier = personne) sur les photos de l'utilisateur, SFace contre AuraFace | Maintenant (retour utilisateur) | Passer AuraFace par défaut ; sinon F10 |
 | H3 | Moins de 2 s par photo sur CPU | Mesure M1 | Fin de tranche 1 | F8, réduction de résolution |
 | H4 | DBSCAN simple suffit | Nombre de corrections en T11 et M3 | Après T10 | Regroupement plus fin |
 | H5 | JPEG et PNG suffisent | Comptage AC-F1-4 sur le vrai dossier | Fin de tranche 1 | F9 |

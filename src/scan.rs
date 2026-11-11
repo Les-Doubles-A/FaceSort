@@ -15,10 +15,22 @@ use std::time::{Duration, Instant};
 /// Nombre de photos décodées en parallèle avant l'inférence.
 const BATCH: usize = 8;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ScanOptions {
     pub recognize: RecognizeParams,
     pub cluster: ClusterParams,
+}
+
+impl ScanOptions {
+    /// Seuils calibrés du modèle de reconnaissance donné.
+    pub fn for_kind(kind: crate::embed::EmbedderKind) -> Self {
+        Self { recognize: RecognizeParams::for_kind(kind), cluster: ClusterParams::for_kind(kind) }
+    }
+
+    /// Seuils du modèle qui a rempli la base (défaut si la base est vide).
+    pub fn for_store(store: &Store) -> Result<Self> {
+        Ok(Self::for_kind(store.embedder_kind()?.unwrap_or(crate::models::DEFAULT_EMBEDDER)))
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -73,6 +85,10 @@ pub struct ScanReport {
     pub ignored: BTreeMap<String, usize>,
     pub auto_assigned: usize,
     pub groups: usize,
+    /// Visages d'analyses antérieures dont la note de qualité vient d'être calculée.
+    pub quality_backfilled: usize,
+    /// Attributions automatiques réévaluées après un changement de seuils.
+    pub auto_reset: usize,
     pub cancelled: bool,
     pub elapsed: Duration,
 }
@@ -197,12 +213,14 @@ pub fn scan(
     store: &mut Store,
     engine: &mut Engine,
     roots: &[PathBuf],
-    opts: ScanOptions,
+    opts: Option<ScanOptions>,
     mut progress: impl FnMut(&Progress),
     cancel: &AtomicBool,
 ) -> Result<ScanReport> {
     let start = Instant::now();
     store.check_models(&engine.ids)?;
+    let opts = opts.unwrap_or_else(|| ScanOptions::for_kind(engine.kind));
+    let quality_backfilled = backfill_quality(store)?;
     let roots: Vec<PathBuf> = roots.iter().map(|r| absolute(r)).collect();
     let (files, ignored, mut errors) = collect_files(&roots);
     for r in &roots {
@@ -210,7 +228,7 @@ pub fn scan(
             store.add_root(r)?;
         }
     }
-    let mut report = ScanReport { ignored, ..Default::default() };
+    let mut report = ScanReport { ignored, quality_backfilled, ..Default::default() };
     let mut todo = Vec::new();
     for f in files {
         if store.is_unchanged(&f.path, f.size, f.mtime)? {
@@ -266,6 +284,7 @@ pub fn scan(
             break;
         }
     }
+    report.auto_reset = store.reset_auto_if_thresholds_changed(crate::thresholds::REVISION)?;
     report.auto_assigned = recognize::recognize_unassigned(store, opts.recognize)?;
     report.groups = cluster::recluster(store, opts.cluster)?;
     report.errors = errors;
@@ -273,8 +292,45 @@ pub fn scan(
     Ok(report)
 }
 
+/// Calcule la note de qualité des visages enregistrés avant qu'elle existe,
+/// à partir des repères déjà stockés (aucun nouveau calcul d'empreinte : les
+/// noms donnés restent attachés). Une photo illisible ou déplacée est sautée.
+pub fn backfill_quality(store: &mut Store) -> Result<usize> {
+    let missing = store.faces_missing_quality()?;
+    if missing.is_empty() {
+        return Ok(0);
+    }
+    let mut by_photo: BTreeMap<PathBuf, Vec<crate::store::StoredFace>> = BTreeMap::new();
+    for f in missing {
+        by_photo.entry(f.photo.clone()).or_default().push(f);
+    }
+    let entries: Vec<_> = by_photo.into_iter().collect();
+    let values: Vec<(i64, f32)> = entries
+        .par_iter()
+        .flat_map_iter(|(path, faces)| {
+            let img = std::fs::read(path).ok().and_then(|b| imageio::decode_oriented(&b).ok());
+            faces
+                .iter()
+                .filter_map(|f| {
+                    let img = img.as_ref()?;
+                    let aligned = crate::align::align_face(img, &f.landmarks);
+                    Some((f.id, crate::quality::FaceQuality::measure(&aligned, f.size, f.det_score).score()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    store.set_quality(&values)?;
+    Ok(values.len())
+}
+
 /// Relance reconnaissance puis regroupement (après un nommage dans la GUI).
-pub fn refresh_groups(store: &mut Store, opts: ScanOptions) -> Result<(usize, usize)> {
+/// Sans options : seuils du modèle qui a rempli la base.
+pub fn refresh_groups(store: &mut Store, opts: Option<ScanOptions>) -> Result<(usize, usize)> {
+    let opts = match opts {
+        Some(o) => o,
+        None => ScanOptions::for_store(store)?,
+    };
+    store.reset_auto_if_thresholds_changed(crate::thresholds::REVISION)?;
     let auto = recognize::recognize_unassigned(store, opts.recognize)?;
     let groups = cluster::recluster(store, opts.cluster)?;
     Ok((auto, groups))

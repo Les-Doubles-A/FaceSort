@@ -9,7 +9,7 @@
 | Interface | `eframe`/`egui` 0.37 (GUI) + `clap` (CLI) | Conventions de tes projets (FontLicenseClassifier, NetPulse) ; GUI immédiate suffisante pour une grille de vignettes | Tauri (HTML/JS en plus, sans bénéfice ici) |
 | Inférence | `ort` 2.0.0-rc.15 (ONNX Runtime), CPU | Seule voie Rust mature pour exécuter des modèles ONNX ; DirectML disponible plus tard par feature | `tract` (pur Rust, compatibilité opérateurs YuNet/SFace non vérifiée) ; OpenCV via `opencv` crate (dépendance C++ lourde à compiler sous Windows) |
 | Détection | YuNet (OpenCV Zoo, MIT) | Licence permissive, petit modèle, fournit les 5 points de repère nécessaires à l'alignement | RetinaFace InsightFace : « non-commercial research purposes only » (D1, F10) |
-| Reconnaissance | SFace (OpenCV Zoo, Apache 2.0) | Licence permissive, conçu pour l'alignement 5 points | ArcFace InsightFace : même restriction de licence |
+| Reconnaissance | SFace (OpenCV Zoo, Apache 2.0) par défaut ; AuraFace-v1 (fal.ai, Apache 2.0, ResNet100, 512 valeurs) au choix via `FACESORT_EMBEDDER` | Licences permissives ; AuraFace confond moins sur photos dégradées mais 261 Mo et plus lent | ArcFace InsightFace : licence non commerciale |
 | Logique | Bibliothèque `facesort` (regroupement, reconnaissance, tri, validation des noms) | Testable sans GUI ni modèle (empreintes synthétiques) | Logique dans la GUI |
 | Stockage | SQLite via `rusqlite` 0.42 `bundled`, `%LOCALAPPDATA%\FaceSort\facesort.db` | Base embarquée, une source de vérité partagée GUI/CLI, déjà utilisée dans tes projets | Fichiers JSON (pas de requêtes, écritures non atomiques) |
 | Serveur / services | Sans objet : tout est local | Aucune donnée partagée, aucune clé, aucun traitement en absence de l'utilisateur | - |
@@ -129,6 +129,8 @@ Fixtures versionnées : uniquement des images libres de droits avec visages (sou
 - **ADR-1 - Modèles OpenCV Zoo plutôt qu'InsightFace** : l'utilisateur a cité RetinaFace, mais le model zoo InsightFace indique « ALL models are available for non-commercial research purposes only ». YuNet + SFace sont sous MIT et Apache 2.0. Conséquence : qualité potentiellement inférieure (H2), mesurée en T11 ; un trait `FaceDetector` garde la porte ouverte à RetinaFace (F10).
 - **ADR-2 - `ort` en version rc épinglée** : pas de version stable 2.x publiée au 2026-11-11 ; `=2.0.0-rc.15` évite une rupture d'API silencieuse.
 - **ADR-3 - Seuls les visages confirmés servent de référence** : empêche qu'une erreur « auto » attire d'autres erreurs (dérive).
+- **ADR-5 - Qualité des visages et seuils par modèle (2026-11-11)** : après des mélanges signalés (femmes, photos mal éclairées), chaque visage reçoit une note (luminosité, contraste, netteté, taille, score de détection ; `faces.quality`, schéma 2, migration par ajout de colonne). Un visage médiocre n'est jamais « cœur » du regroupement, doit être plus ressemblant (+0,15) pour être relié ou reconnu, et ne sert de référence que faute de mieux. Les seuils dépendent du modèle (`thresholds::for_kind`) et ont une révision : à chaque changement, les attributions automatiques sont réévaluées une fois. Principe : mieux vaut deux groupes à fusionner qu'un groupe mélangé.
+- **ADR-6 - Un seul environnement ONNX Runtime par processus** : ONNX Runtime le refuse sinon ; l'environnement est créé une fois et partagé (une deuxième analyse dans la même session de la GUI échouait).
 - **ADR-4 - Plan puis exécution pour le tri** : le même code produit l'aperçu et la copie, ce qui garantit que l'aperçu dit vrai (AC-F5-1).
 
 ## 14. Arborescence proposée

@@ -14,6 +14,7 @@ fn face(v: f32) -> AnalyzedFace {
     AnalyzedFace {
         detection: Detection { bbox: [0.0, 0.0, 60.0, 60.0], landmarks: [[0.0; 2]; 5], score: 0.95 },
         embedding: vec![v, 1.0],
+        quality: Default::default(),
         thumb_jpeg: vec![],
     }
 }

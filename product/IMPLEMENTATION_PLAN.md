@@ -6,7 +6,7 @@
 
 | ID | Décision | Options | Recommandation | Bloque |
 |---|---|---|---|---|
-| D1 | Modèle de détection | YuNet (MIT) ; RetinaFace InsightFace (non commercial, recherche) | YuNet, RetinaFace reporté en F10 si T11 montre un manque de rappel (ADR-1) | T2 |
+| D1 | Modèle de détection et de reconnaissance | YuNet + SFace (MIT, Apache 2.0) ; YuNet + AuraFace-v1 (Apache 2.0, 261 Mo, plus lent) ; RetinaFace/ArcFace InsightFace (non commercial) | Tranché le 2026-11-11 : YuNet + SFace par défaut, AuraFace disponible (`FACESORT_EMBEDDER=auraface`). Sur le banc « femmes + photos dégradées », AuraFace confond moins (pire paire de personnes différentes 0,33 contre 0,40). Choix définitif après `eval` sur les photos de l'utilisateur (T11) | T2, T11 |
 | D2 | Photos de test | Images libres de droits versionnées ; photos personnelles non versionnées (`fixtures-private/`) ; les deux | Les deux : quelques images libres pour la CI si un jeu adapté existe, photos personnelles pour l'évaluation T11 | T2, T4, T11 |
 | D3 | Variante YuNet | `2023mar` (entrée fixe) ; `2026may` (entrée dynamique) | Essai court en T2 : garder celle qui s'exécute avec `ort` et donne les cadres attendus sur `fixtures/basic` | T2 |
 
@@ -162,7 +162,7 @@
 - **Tests** : l'exemple lui-même ; résultats notés dans README.
 - **Terminé quand** : précision au moins 95 % et rappel au moins 85 % atteints, ou décision consignée (F10, F8, ou seuils plus prudents).
 - **Couvre** : F2, F4
-- **Statut** : en cours : `examples/eval.rs` ; paires sur `fixtures/people3` : séparation parfaite entre 0,40 et 0,55 ; bug : la partie « chaîne complète » renvoie 0 (copie de base sans checkpoint WAL) ; reste le jeu de 200 photos personnelles
+- **Statut** : en cours (2026-11-11). Retour utilisateur : des personnes se mélangent, surtout des femmes et des photos mal éclairées. Fait : note de qualité par visage (`src/quality.rs`) ; regroupement où un visage médiocre ne relie jamais deux groupes et doit être plus ressemblant, membres trop loin du centre détachés ; « Séparer ce groupe » adaptatif ; reconnaissance plus exigeante pour les visages médiocres ; seuils par modèle, resserrés (SFace : regroupement 0,50, reconnaissance 0,45) ; base existante migrée sans perte (notes calculées après coup, attributions auto réévaluées une fois) ; AuraFace intégré ; `examples/eval.rs` réécrit (sous-dossier = personne, deux modèles, confusions, groupes mélangés). Banc public (164 visages de 6 femmes dont 48 médiocres) : 0 groupe mélangé et 0 reconnaissance fausse aux nouveaux seuils pour les deux modèles. Reste : `eval` sur les photos de l'utilisateur, puis choix du modèle par défaut
 
 ### T12 - Paquet portable et validation
 

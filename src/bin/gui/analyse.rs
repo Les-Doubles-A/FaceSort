@@ -129,6 +129,12 @@ fn success(app: &mut FaceSortApp, ui: &mut egui::Ui, r: &ScanReport) {
             "{} visages reconnus automatiquement, {} groupes à nommer",
             r.auto_assigned, r.groups
         ));
+        if r.quality_backfilled > 0 || r.auto_reset > 0 {
+            ui.label(format!(
+                "Mise à niveau : {} visage(s) déjà connus notés en qualité, {} attribution(s) automatique(s) réévaluée(s) avec les nouveaux seuils",
+                r.quality_backfilled, r.auto_reset
+            ));
+        }
         ui.label(format!(
             "Durée : {} ({:.2} s par photo)  ·  {}",
             human_duration(r.elapsed),

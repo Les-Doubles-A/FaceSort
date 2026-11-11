@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, RichText};
 use facesort::engine::Engine;
-use facesort::scan::{self, Progress, ScanOptions, ScanReport};
+use facesort::scan::{self, Progress, ScanReport};
 use facesort::store::{self, Stats, Store};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -56,6 +56,8 @@ pub struct FaceSortApp {
     pub tri: crate::tri::TriState,
     /// Vignettes chargées (None : vignette absente ou illisible).
     thumbs: HashMap<i64, Option<egui::TextureHandle>>,
+    /// Note de qualité des visages affichés (None : non notée).
+    qualities: HashMap<i64, Option<f32>>,
 }
 
 impl FaceSortApp {
@@ -74,9 +76,24 @@ impl FaceSortApp {
             people: Default::default(),
             tri: Default::default(),
             thumbs: HashMap::new(),
+            qualities: HashMap::new(),
         };
         app.reload();
         app
+    }
+
+    /// Note de qualité d'un visage (mise en cache ; vidée à chaque rechargement).
+    pub fn face_quality(&mut self, face: i64) -> Option<f32> {
+        if let Some(q) = self.qualities.get(&face) {
+            return *q;
+        }
+        let q = self.store.as_ref().and_then(|s| s.face_info(face).ok().flatten()).and_then(|i| i.quality);
+        self.qualities.insert(face, q);
+        q
+    }
+
+    pub fn forget_qualities(&mut self) {
+        self.qualities.clear();
     }
 
     /// Texture de la vignette d'un visage, chargée une seule fois.
@@ -146,7 +163,7 @@ impl FaceSortApp {
                     &mut store,
                     &mut engine,
                     &roots,
-                    ScanOptions::default(),
+                    None,
                     move |p| {
                         let _ = ptx.send(Msg::Progress(p.clone()));
                         pctx.request_repaint();

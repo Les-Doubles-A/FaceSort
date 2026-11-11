@@ -3,7 +3,7 @@
 
 mod common;
 
-use facesort::scan::{self, ScanOptions};
+use facesort::scan;
 use facesort::sort::{self, SortOptions};
 use facesort::store::{NameOutcome, Store};
 use std::collections::{BTreeSet, HashMap};
@@ -32,20 +32,20 @@ fn scan_basic_rescan_truncated_and_ignored() {
     let mut s = Store::open(&d.path().join("t.db")).unwrap();
     let cancel = AtomicBool::new(false);
 
-    let r = scan::scan(&mut s, &mut engine, std::slice::from_ref(&src), ScanOptions::default(), |_| {}, &cancel).unwrap();
+    let r = scan::scan(&mut s, &mut engine, std::slice::from_ref(&src), None, |_| {}, &cancel).unwrap();
     assert_eq!(r.analyzed, 10);
     assert!((r.faces_found as i64 - total).abs() <= 1, "{} visages au lieu de {total}", r.faces_found);
     assert!(r.summary().starts_with("10 photos analysées"), "{}", r.summary());
     assert_eq!(r.ignored.get(".json"), Some(&1));
 
-    let r2 = scan::scan(&mut s, &mut engine, std::slice::from_ref(&src), ScanOptions::default(), |_| {}, &cancel).unwrap();
+    let r2 = scan::scan(&mut s, &mut engine, std::slice::from_ref(&src), None, |_| {}, &cancel).unwrap();
     assert!(r2.summary().starts_with("0 photo analysée, 10 inchangées"), "{}", r2.summary());
 
     // JPEG tronqué + extension ignorée
     let bytes = std::fs::read(src.join("biden_13.jpg")).unwrap();
     std::fs::write(src.join("tronque.jpg"), &bytes[..bytes.len() / 2]).unwrap();
     std::fs::write(src.join("IMG_1.heic"), b"x").unwrap();
-    let r3 = scan::scan(&mut s, &mut engine, std::slice::from_ref(&src), ScanOptions::default(), |_| {}, &cancel).unwrap();
+    let r3 = scan::scan(&mut s, &mut engine, std::slice::from_ref(&src), None, |_| {}, &cancel).unwrap();
     assert_eq!(r3.analyzed, 0);
     assert_eq!(r3.errors.len(), 1);
     assert!(r3.errors[0].0.ends_with("tronque.jpg"));
@@ -87,7 +87,7 @@ fn full_journey_people3() {
     let mut s = Store::open(&d.path().join("t.db")).unwrap();
     let cancel = AtomicBool::new(false);
 
-    let r = scan::scan(&mut s, &mut engine, std::slice::from_ref(&a), ScanOptions::default(), |_| {}, &cancel).unwrap();
+    let r = scan::scan(&mut s, &mut engine, std::slice::from_ref(&a), None, |_| {}, &cancel).unwrap();
     assert_eq!(r.faces_found, 18);
     let groups = s.groups().unwrap();
     let mut groups_per_person: HashMap<String, usize> = HashMap::new();
@@ -123,7 +123,7 @@ fn full_journey_people3() {
     assert_eq!(s.stats().unwrap().unassigned_faces, 0);
 
     // P2 : nouveau dossier, reconnaissance automatique
-    let r = scan::scan(&mut s, &mut engine, std::slice::from_ref(&b), ScanOptions::default(), |_| {}, &cancel).unwrap();
+    let r = scan::scan(&mut s, &mut engine, std::slice::from_ref(&b), None, |_| {}, &cancel).unwrap();
     assert_eq!(r.faces_found, 4);
     let barack = s.person_by_name("Barack").unwrap().unwrap().0;
     let mut auto_barack = 0;

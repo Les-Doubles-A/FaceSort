@@ -2,11 +2,12 @@
 
 use crate::app::{FaceSortApp, Tab};
 use eframe::egui::{self, Color32, RichText};
-use facesort::scan::{self, ScanOptions};
+use facesort::scan;
 use facesort::store::{Group, NameOutcome, PersonSummary};
 use std::collections::HashMap;
 
 const ERROR_COLOR: Color32 = Color32::from_rgb(200, 60, 60);
+const POOR_COLOR: Color32 = Color32::from_rgb(190, 120, 20);
 const THUMB: f32 = 72.0;
 const GROUP_THUMBS: usize = 12;
 const PERSON_THUMBS: usize = 60;
@@ -58,6 +59,7 @@ enum Action {
     AddGroupTo(i64, i64),
     CancelNote(i64),
     IgnoreGroup(i64),
+    SplitGroup(i64),
     RemoveFromGroup(i64),
     RemoveFromPerson(i64, i64),
     Rename(i64, String),
@@ -124,6 +126,15 @@ fn apply(app: &mut FaceSortApp, action: Action) {
                 store.ignore_faces(&faces)?;
                 st.info = Some(format!("{} visage(s) ignoré(s) : ils ne seront ni regroupés ni triés.", faces.len()));
             }
+            Action::SplitGroup(cluster) => {
+                let params = facesort::scan::ScanOptions::for_store(store)?.cluster;
+                let n = facesort::cluster::split_group(store, cluster, params)?;
+                st.info = Some(if n >= 2 {
+                    format!("Groupe séparé en {n} groupes : nommez chacun, ou fusionnez-les s'il s'agit de la même personne.")
+                } else {
+                    "Ce groupe semble homogène : retirez les visages en trop avec « Retirer ».".into()
+                });
+            }
             Action::RemoveFromGroup(face) => store.remove_face_from_group(face)?,
             Action::RemoveFromPerson(face, person) => {
                 store.remove_face_from_person(face)?;
@@ -162,7 +173,7 @@ fn apply(app: &mut FaceSortApp, action: Action) {
                 st.info = Some(format!("{} visage(s) ignoré(s).", faces.len()));
             }
             Action::Refresh => {
-                let (auto, groups) = scan::refresh_groups(store, ScanOptions::default())?;
+                let (auto, groups) = scan::refresh_groups(store, None)?;
                 st.info = Some(format!("{auto} visage(s) attribué(s) automatiquement, {groups} groupe(s) à nommer."));
             }
             Action::ShowMore => {
@@ -180,17 +191,25 @@ fn apply(app: &mut FaceSortApp, action: Action) {
         let keep = std::mem::take(&mut app.people.person_faces);
         reload(app);
         app.people.person_faces = keep;
+        app.forget_qualities();
         app.reload();
     }
 }
 
 /// Vignette d'un visage ; survol : chemin de la photo.
+/// Les visages de mauvaise qualité (sombres, flous, petits…) portent la
+/// mention « médiocre » : ce sont eux qui causent le plus de mélanges.
 fn thumb(app: &mut FaceSortApp, ui: &mut egui::Ui, face: i64) -> egui::Response {
     let tex = app.thumb(ui.ctx(), face);
+    let poor = !facesort::quality::is_good_score(app.face_quality(face));
     let resp = match tex {
         Some(t) => ui.add(egui::Image::from_texture(&t).fit_to_exact_size(egui::vec2(THUMB, THUMB))),
         None => ui.add_sized([THUMB, THUMB], egui::Label::new("?")),
     };
+    if poor {
+        ui.label(RichText::new("médiocre").small().color(POOR_COLOR))
+            .on_hover_text("Photo sombre, floue, peu contrastée ou visage petit : reconnaissance peu fiable");
+    }
     if resp.hovered()
         && let Some(info) = app.store.as_ref().and_then(|s| s.face_info(face).ok().flatten())
     {
@@ -293,6 +312,14 @@ fn groups_section(app: &mut FaceSortApp, ui: &mut egui::Ui, actions: &mut Vec<Ac
                             }
                         }
                     });
+                }
+                if g.face_ids.len() >= 3
+                    && ui
+                        .button("Séparer ce groupe")
+                        .on_hover_text("Plusieurs personnes mélangées ? Coupe le groupe là où la ressemblance est la plus faible")
+                        .clicked()
+                {
+                    actions.push(Action::SplitGroup(g.cluster_id));
                 }
                 if ui.button("Ignorer ce groupe").on_hover_text("Inconnus sans intérêt : ni regroupés, ni triés").clicked() {
                     actions.push(Action::IgnoreGroup(g.cluster_id));
