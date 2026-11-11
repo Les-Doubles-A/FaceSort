@@ -410,6 +410,82 @@ mod tests {
         assert!(check_destination(Path::new(r"D:\Tri"), &roots).is_ok());
     }
 
+    /// AC-F5-2, AC-F5-3, AC-F5-4, AC-F5-6 : copie réelle, originaux intacts, second tri sans copie, journal.
+    #[test]
+    fn execute_copies_identically_and_is_idempotent() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let both = src.join("both.jpg");
+        let unk = src.join("unk.jpg");
+        std::fs::write(&both, b"photo avec Lea et Tom").unwrap();
+        std::fs::write(&unk, b"photo inconnue").unwrap();
+        let mtime_before = std::fs::metadata(&both).unwrap().modified().unwrap();
+        let sha_before = util::sha256_file(&both).unwrap();
+        let photos = vec![photo(&both, &["Léa", "Tom"], false), photo(&unk, &[], true)];
+        let opts = SortOptions { dest: d.path().join("out"), include_unknown: true };
+        let cancel = AtomicBool::new(false);
+
+        let p = plan(&photos, std::slice::from_ref(&src), &opts).unwrap();
+        let r = execute(&p, |_, _| {}, &cancel);
+        assert_eq!((r.copied, r.renamed, r.already_present), (3, 0, 0), "{}", r.summary());
+        assert!(r.stopped_on_error.is_none());
+        let out = d.path().join("out");
+        for person in ["Léa", "Tom"] {
+            let copy = out.join(person).join("both.jpg");
+            assert_eq!(util::sha256_file(&copy).unwrap(), sha_before);
+            assert_eq!(std::fs::metadata(&copy).unwrap().modified().unwrap(), mtime_before, "date conservée");
+        }
+        assert!(out.join(UNKNOWN_DIR).join("unk.jpg").is_file());
+        assert_eq!(util::sha256_file(&both).unwrap(), sha_before, "original intact");
+        assert_eq!(std::fs::metadata(&both).unwrap().modified().unwrap(), mtime_before);
+        let log = std::fs::read_to_string(r.log_path.as_ref().unwrap()).unwrap();
+        assert!(log.starts_with("source,destination,personne,statut"));
+        assert_eq!(log.lines().count(), 4);
+        assert!(!std::fs::read_dir(out.join("Léa")).unwrap().any(|e| {
+            e.unwrap().file_name().to_string_lossy().ends_with(".facesort-tmp")
+        }));
+
+        // Second tri identique : rien à copier.
+        let p2 = plan(&photos, std::slice::from_ref(&src), &opts).unwrap();
+        assert_eq!(p2.to_write(), 0);
+        let r2 = execute(&p2, |_, _| {}, &cancel);
+        assert_eq!((r2.copied, r2.renamed, r2.already_present), (0, 0, 3));
+
+        // Sans _Inconnus
+        let opts3 = SortOptions { dest: d.path().join("out3"), include_unknown: false };
+        let p3 = plan(&photos, std::slice::from_ref(&src), &opts3).unwrap();
+        assert!(p3.copies.iter().all(|c| c.person != UNKNOWN_DIR));
+    }
+
+    /// AC-F5-5 : écriture impossible -> arrêt, cause et journal, pas de fichier partiel.
+    #[test]
+    fn write_error_stops_cleanly() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.jpg"), b"aaa").unwrap();
+        std::fs::write(src.join("b.jpg"), b"bbb").unwrap();
+        let out = d.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let photos = vec![photo(&src.join("a.jpg"), &["Ana"], false), photo(&src.join("b.jpg"), &["Léa"], false)];
+        let p = plan(&photos, std::slice::from_ref(&src), &SortOptions { dest: out.clone(), include_unknown: false })
+            .unwrap();
+        // Après l'aperçu, un fichier « Léa » empêche la création du dossier Léa\
+        std::fs::write(out.join("Léa"), b"bloque").unwrap();
+        let r = execute(&p, |_, _| {}, &AtomicBool::new(false));
+        assert!(r.stopped_on_error.as_deref().is_some_and(|e| e.contains("Léa")), "{}", r.summary());
+        assert_eq!(r.copied, 1, "la copie précédant l'erreur est faite");
+        let log = std::fs::read_to_string(r.log_path.as_ref().unwrap()).unwrap();
+        assert!(log.lines().last().unwrap().ends_with(",erreur"), "{log}");
+        let leftovers: Vec<_> = std::fs::read_dir(&out)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".facesort-tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+    }
+
     #[test]
     fn plan_counts_and_dedupes_same_names_from_different_folders() {
         let d = tempfile::tempdir().unwrap();

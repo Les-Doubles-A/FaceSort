@@ -3,6 +3,8 @@
 
 mod analyse;
 mod app;
+mod people;
+mod tri;
 
 use eframe::egui;
 

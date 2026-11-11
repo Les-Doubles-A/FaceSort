@@ -4,6 +4,7 @@ use eframe::egui::{self, RichText};
 use facesort::engine::Engine;
 use facesort::scan::{self, Progress, ScanOptions, ScanReport};
 use facesort::store::{self, Stats, Store};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,6 +52,10 @@ pub struct FaceSortApp {
     pub job: Option<ScanJob>,
     /// Résultat de la dernière analyse de cette session.
     pub last: Option<Result<ScanReport, String>>,
+    pub people: crate::people::PeopleState,
+    pub tri: crate::tri::TriState,
+    /// Vignettes chargées (None : vignette absente ou illisible).
+    thumbs: HashMap<i64, Option<egui::TextureHandle>>,
 }
 
 impl FaceSortApp {
@@ -66,9 +71,31 @@ impl FaceSortApp {
             roots: Vec::new(),
             job: None,
             last: None,
+            people: Default::default(),
+            tri: Default::default(),
+            thumbs: HashMap::new(),
         };
         app.reload();
         app
+    }
+
+    /// Texture de la vignette d'un visage, chargée une seule fois.
+    pub fn thumb(&mut self, ctx: &egui::Context, face: i64) -> Option<egui::TextureHandle> {
+        if let Some(t) = self.thumbs.get(&face) {
+            return t.clone();
+        }
+        let tex = self
+            .store
+            .as_ref()
+            .and_then(|s| s.face_thumb(face).ok().flatten())
+            .and_then(|jpeg| image::load_from_memory(&jpeg).ok())
+            .map(|img| {
+                let rgb = img.to_rgb8();
+                let size = [rgb.width() as usize, rgb.height() as usize];
+                ctx.load_texture(format!("visage-{face}"), egui::ColorImage::from_rgb(size, rgb.as_raw()), Default::default())
+            });
+        self.thumbs.insert(face, tex.clone());
+        tex
     }
 
     /// Rouvre la base si besoin et relit les compteurs.
@@ -152,7 +179,10 @@ impl FaceSortApp {
             }
             self.last = Some(r);
             self.reload();
+            self.people.dirty = true;
+            self.tri.invalidate();
         }
+        crate::tri::poll(self);
     }
 }
 
@@ -176,7 +206,7 @@ impl eframe::App for FaceSortApp {
 
         egui::Panel::bottom("etat").show(ui, |ui| {
             ui.horizontal(|ui| {
-                if self.job.is_some() {
+                if self.job.is_some() || self.tri.is_running() {
                     ui.spinner();
                 }
                 let s = &self.stats;
@@ -196,10 +226,8 @@ impl eframe::App for FaceSortApp {
 
         egui::CentralPanel::default().show(ui, |ui| match self.tab {
             Tab::Analyse => crate::analyse::show(self, ui),
-            Tab::Personnes | Tab::Tri => {
-                ui.heading(if self.tab == Tab::Personnes { "Personnes" } else { "Tri" });
-                ui.label("Cet écran arrive avec la tâche T10. En attendant : « facesort-cli status » et « facesort-cli sort ».");
-            }
+            Tab::Personnes => crate::people::show(self, ui),
+            Tab::Tri => crate::tri::show(self, ui),
         });
     }
 }

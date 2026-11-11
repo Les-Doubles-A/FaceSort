@@ -44,31 +44,31 @@
 
 | Critère | Vérification | Test ou scénario | Tâche |
 |---|---|---|---|
-| AC-F1-1 | Automatique | `tests/scan.rs::scan_basic` | T4 |
-| AC-F1-2 | Automatique | `tests/scan.rs::rescan_unchanged` | T4 |
-| AC-F1-3 | Automatique | `tests/scan.rs::truncated_jpeg` | T4 |
-| AC-F1-4 | Automatique | `tests/scan.rs::ignored_extensions` | T4 |
-| AC-F1-5 | Automatique | `src/detect.rs` test `exif_orientation_6` | T2 |
-| AC-F2-1 | Automatique | `src/cluster.rs` + `tests/scan.rs::people3_clusters_pure` | T5 |
-| AC-F2-2 | Automatique | `tests/scan.rs::people3_max_two_groups` | T5 |
-| AC-F2-3 | Automatique | `src/cluster.rs` test `deterministic` | T5 |
-| AC-F2-4 | Automatique | `src/cluster.rs` test `perf_5000` (release, `#[ignore]` en debug) | T5 |
+| AC-F1-1 | Automatique | `tests/scan.rs::scan_basic_rescan_truncated_and_ignored` | T4 |
+| AC-F1-2 | Automatique | `tests/scan.rs::scan_basic_rescan_truncated_and_ignored` | T4 |
+| AC-F1-3 | Automatique | `tests/scan.rs::scan_basic_rescan_truncated_and_ignored` ; `imageio::tests::truncated_jpeg_is_an_error` | T4 |
+| AC-F1-4 | Automatique | `tests/scan.rs::scan_basic_rescan_truncated_and_ignored` ; `scan::tests::collect_counts_ignored_extensions` | T4 |
+| AC-F1-5 | Automatique | `tests/scan.rs::exif_orientation_detects_same_faces` | T2 |
+| AC-F2-1 | Automatique | `cluster::tests::separated_clouds_give_pure_groups` ; `tests/scan.rs::full_journey_people3` | T5 |
+| AC-F2-2 | Automatique | `tests/scan.rs::full_journey_people3` | T5 |
+| AC-F2-3 | Automatique | `cluster::tests::deterministic` | T5 |
+| AC-F2-4 | Automatique | `cluster::tests::perf_5000` (release, `--ignored`) | T5 |
 | AC-F3-1 | Manuelle | M2 | T10 |
-| AC-F3-2 | Automatique | `store` test `merge_on_same_name` | T7 |
-| AC-F3-3 | Automatique | `names` tests | T1 |
-| AC-F3-4 | Automatique | `store` test `exclusion_persists` | T7 |
+| AC-F3-2 | Automatique | `store::tests::merge_on_same_name` | T7 |
+| AC-F3-3 | Automatique | `names::tests` ; `store::tests::invalid_name_is_refused_and_nothing_saved` | T1 |
+| AC-F3-4 | Automatique | `store::tests::exclusion_persists` | T7 |
 | AC-F3-5 | Manuelle | M2 | T10 |
-| AC-F4-1 | Automatique | `tests/scan.rs::recognize_new_photos` | T6 |
-| AC-F4-2 | Automatique | `tests/scan.rs::unknown_not_assigned` | T6 |
-| AC-F4-3 | Automatique | `src/recognize.rs` test `ambiguous_margin` | T6 |
-| AC-F5-1 | Automatique | `tests/sort.rs::dry_run_writes_nothing` | T8 |
-| AC-F5-2 | Automatique | `tests/sort.rs::multi_person_copies_identical` | T8 |
-| AC-F5-3 | Automatique | `tests/sort.rs::unknown_folder_option` | T8 |
-| AC-F5-4 | Automatique | `tests/sort.rs::collisions_and_idempotence` | T8 |
-| AC-F5-5 | Automatique + manuelle | `tests/sort.rs::readonly_destination` ; M4 (disque plein) | T8, T12 |
-| AC-F5-6 | Automatique | `tests/sort.rs::log_csv` | T8 |
+| AC-F4-1 | Automatique | `tests/scan.rs::full_journey_people3` | T6 |
+| AC-F4-2 | Automatique | `tests/scan.rs::full_journey_people3` | T6 |
+| AC-F4-3 | Automatique | `recognize::tests::ambiguous_margin` | T6 |
+| AC-F5-1 | Automatique | `sort::tests::plan_counts_and_dedupes_same_names_from_different_folders` (aperçu sans écriture) | T8 |
+| AC-F5-2 | Automatique | `sort::tests::execute_copies_identically_and_is_idempotent` ; `tests/scan.rs::full_journey_people3` | T8 |
+| AC-F5-3 | Automatique | `sort::tests::execute_copies_identically_and_is_idempotent` | T8 |
+| AC-F5-4 | Automatique | `sort::tests::execute_copies_identically_and_is_idempotent` | T8 |
+| AC-F5-5 | Automatique + manuelle | `sort::tests::write_error_stops_cleanly` ; M4 (disque plein) | T8, T12 |
+| AC-F5-6 | Automatique | `sort::tests::execute_copies_identically_and_is_idempotent` | T8 |
 | AC-F6-1 | Automatique + manuelle | `tests/cli.rs::help` ; relecture en M4 | T4, T12 |
-| AC-F6-2 | Automatique | `tests/cli.rs::exit_codes` | T4, T8 |
+| AC-F6-2 | Automatique | `tests/cli.rs::exit_codes` ; code 3 : `tests/scan.rs::scan_basic_rescan_truncated_and_ignored` | T4, T8 |
 | AC-F6-3 | Automatique | `tests/cli.rs::status_json` | T4 |
 | AC-F6-4 | Automatique | `tests/cli.rs::status_sees_named_person` | T10 |
 

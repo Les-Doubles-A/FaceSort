@@ -55,7 +55,7 @@
 - **Tests** : nombre de visages sur `fixtures/basic` contre `expected.json` ; fixture EXIF orientation 6 vs redressée ; modèle au mauvais hash refusé.
 - **Terminé quand** : les tests passent ; un exemple `cargo run --example detect -- photo.jpg` écrit une image annotée vérifiée à l'oeil.
 - **Couvre** : F1, AC-F1-5
-- **Statut** : en grande partie fait : `tests/reference.rs` (cadres < 1 px et scores à 1e-3 près d'OpenCV 5.0) ; reste : test de détection sur `fixtures/exif` (AC-F1-5 n'est vérifié que sur les dimensions décodées)
+- **Statut** : fait : `tests/reference.rs` (conformité OpenCV) et `tests/scan.rs::exif_orientation_detects_same_faces` (AC-F1-5) OK
 
 ### T3 - Alignement et empreintes
 
@@ -85,7 +85,7 @@
 - **Tests** : intégration `tests/scan.rs` (fixtures basic, rescan, JPEG tronqué, extensions ignorées) ; `tests/cli.rs` (codes de sortie, JSON valide).
 - **Terminé quand** : tests verts ; scénario M1 exécuté sur un vrai dossier et le temps par photo noté (H3).
 - **Couvre** : F1, F6, AC-F1-1, AC-F1-2, AC-F1-3, AC-F1-4, AC-F6-1, AC-F6-2, AC-F6-3
-- **Statut** : en cours : `facesort-cli scan fixtures/basic` donne 10 photos / 12 visages, rescan 0 photo, dossier absent code 1 (exécuté 2026-11-11) ; reste `tests/scan.rs`, `tests/cli.rs` et M1 sur un vrai dossier
+- **Statut** : en grande partie fait : `tests/scan.rs::scan_basic_rescan_truncated_and_ignored` et `tests/cli.rs` (4 tests) OK ; reste M1 sur un vrai dossier (H3)
 
 ### T5 - Regroupement
 
@@ -96,7 +96,7 @@
 - **Tests** : synthétiques (3 nuages bien séparés, bruit isolé, déterminisme, 5 000 empreintes < 10 s en release) ; `fixtures/people3`.
 - **Terminé quand** : tests verts.
 - **Couvre** : F2, AC-F2-1, AC-F2-2, AC-F2-3, AC-F2-4
-- **Statut** : en cours : tests unitaires synthétiques OK (pureté, isolé, déterminisme) ; reste intégration `fixtures/people3` et `perf_5000` en release
+- **Statut** : en grande partie fait : unitaires + `tests/scan.rs::full_journey_people3` (groupes purs, 2 groupes max par personne) OK ; reste `perf_5000` en release
 
 ### T6 - Reconnaissance
 
@@ -107,7 +107,7 @@
 - **Tests** : synthétiques (attribution, inconnu, ambiguïté) ; intégration `people3` puis `people3_new`.
 - **Terminé quand** : tests verts.
 - **Couvre** : F4, AC-F4-1, AC-F4-2, AC-F4-3
-- **Statut** : en cours : tests unitaires OK (dont AC-F4-3) ; reste intégration `people3` puis `people3_new`
+- **Statut** : fait : unitaires + `tests/scan.rs::full_journey_people3` (3 nouvelles photos reconnues « auto », inconnu non attribué) OK
 
 ### T7 - Opérations sur les personnes
 
@@ -129,7 +129,7 @@
 - **Tests** : `tests/sort.rs` dans `TempDir` : multi-personnes avec SHA-256, `_Inconnus/`, collision différente et identique, second tri à 0 copie, destination en lecture seule, journal, dry-run sans écriture.
 - **Terminé quand** : tests verts.
 - **Couvre** : F5, F6, AC-F5-1, AC-F5-2, AC-F5-3, AC-F5-4, AC-F5-5, AC-F5-6, AC-F6-2
-- **Statut** : en cours : plan et aperçu testés ; exécution (`execute`) non testée, `tests/sort.rs` à écrire
+- **Statut** : fait côté code : `sort::tests::execute_copies_identically_and_is_idempotent`, `write_error_stops_cleanly`, tri réel de 22 copies dans `full_journey_people3` OK ; reste M4 (disque plein, manuel)
 
 ### T9 - GUI : écran Analyse (E1)
 
@@ -151,7 +151,7 @@
 - **Tests** : scénarios manuels M2 et M3 ; AC-F6-4 par test d'intégration (lib nomme, CLI lit).
 - **Terminé quand** : M2 et M3 réussis.
 - **Couvre** : F3, F5, F6, AC-F3-1, AC-F3-5, AC-F6-4
-- **Statut** : à faire
+- **Statut** : fait côté code (2026-11-11), vérification manuelle restante : écrans Personnes (nommer, « existe déjà -> ajouter », ajouter à…, retirer, ignorer, renommer, fusionner, confirmer les auto, relancer la reconnaissance, visages isolés) et Tri (destination, aperçu par dossier, espace libre, copie en arrière-plan, annulation, journal, ouvrir le dossier) ; `tests/cli.rs::status_sees_named_person` (AC-F6-4) OK ; fenêtre lancée sur une base de 30 visages sans erreur ; à faire à la main : M2 (AC-F3-1, AC-F3-5) et M3
 
 ### T11 - Évaluation et calibration des seuils
 
