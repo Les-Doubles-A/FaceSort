@@ -14,7 +14,7 @@ name = "FaceSort"
 path = "src/bin/gui/main.rs"
 
 [[bin]]
-name = "facesort"
+name = "facesort-cli"
 path = "src/bin/cli.rs"
 
 [dependencies]

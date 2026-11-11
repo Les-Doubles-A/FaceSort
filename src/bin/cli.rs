@@ -18,10 +18,10 @@ const EXIT_PARTIAL: u8 = 3;
 
 #[derive(Parser)]
 #[command(
-    name = "facesort",
+    name = "facesort-cli",
     version,
     about = "Range des photos par personne grâce à la détection et la reconnaissance faciales, 100 % en local.",
-    after_help = "Exemples :\n  facesort scan D:\\Photos\\2024\n  facesort sort E:\\Tri --dry-run\n  facesort status --json\n\n\
+    after_help = "Exemples :\n  facesort-cli scan D:\\Photos\\2024\n  facesort-cli sort E:\\Tri --dry-run\n  facesort-cli status --json\n\n\
 Nommez les groupes de visages dans l'application FaceSort (fenêtre) entre « scan » et « sort ».\n\
 Codes de sortie : 0 succès, 1 erreur fatale, 2 arguments invalides, 3 succès partiel."
 )]
@@ -43,7 +43,7 @@ enum Cmd {
     /// Les photos déjà analysées et inchangées sont sautées. En fin d'analyse,
     /// les visages des personnes connues leur sont attribués et les autres
     /// sont regroupés par ressemblance.
-    #[command(after_help = "Exemple :\n  facesort scan D:\\Photos\\2024 D:\\Photos\\2025 --json")]
+    #[command(after_help = "Exemple :\n  facesort-cli scan D:\\Photos\\2024 D:\\Photos\\2025 --json")]
     Scan {
         /// Dossiers à analyser.
         #[arg(required = true, value_name = "DOSSIER")]
@@ -60,7 +60,7 @@ enum Cmd {
     /// Une photo avec plusieurs personnes est copiée dans le dossier de
     /// chacune. Les photos ne contenant que des visages non nommés vont dans
     /// _Inconnus\, sauf avec --no-unknown. Un journal CSV est écrit dans la destination.
-    #[command(after_help = "Exemples :\n  facesort sort E:\\Tri --dry-run\n  facesort sort E:\\Tri --no-unknown")]
+    #[command(after_help = "Exemples :\n  facesort-cli sort E:\\Tri --dry-run\n  facesort-cli sort E:\\Tri --no-unknown")]
     Sort {
         /// Dossier de destination (hors des dossiers analysés).
         #[arg(value_name = "DESTINATION")]
@@ -76,7 +76,7 @@ enum Cmd {
         json: bool,
     },
     /// Affiche le contenu de la base : photos, visages, personnes.
-    #[command(after_help = "Exemple :\n  facesort status --json")]
+    #[command(after_help = "Exemple :\n  facesort-cli status --json")]
     Status {
         /// Résultat au format JSON sur la sortie standard.
         #[arg(long)]
@@ -195,7 +195,7 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
                 });
                 println!("{}", serde_json::to_string_pretty(&v)?);
             } else if stats.photos == 0 {
-                println!("Base vide ({}). Lancez « facesort scan <dossier> ».", store.path().display());
+                println!("Base vide ({}). Lancez « facesort-cli scan <dossier> ».", store.path().display());
             } else {
                 println!("Base : {}", store.path().display());
                 println!(

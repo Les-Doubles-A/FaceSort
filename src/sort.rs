@@ -419,7 +419,7 @@ mod tests {
         std::fs::write(src.join("a/IMG.jpg"), b"one").unwrap();
         std::fs::write(src.join("b/IMG.jpg"), b"two!").unwrap();
         let photos = vec![photo(&src.join("a/IMG.jpg"), &["Léa"], false), photo(&src.join("b/IMG.jpg"), &["Léa"], false)];
-        let p = plan(&photos, &[src.clone()], &SortOptions { dest: d.path().join("out"), include_unknown: true }).unwrap();
+        let p = plan(&photos, std::slice::from_ref(&src), &SortOptions { dest: d.path().join("out"), include_unknown: true }).unwrap();
         assert_eq!(p.to_write(), 2);
         assert_eq!(p.total_bytes, 7);
         assert!(p.copies[1].target.ends_with("IMG (2).jpg"));

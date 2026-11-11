@@ -19,7 +19,7 @@
 
 ## 3. Tranche 1 - premier résultat testable
 
-- **Ce que l'utilisateur pourra faire à la fin** : lancer `facesort scan D:\Photos\2024` et lire « 812 photos analysées, 1 455 visages, 3 erreurs, 1,1 s/photo », puis `facesort status`. Valide H3 et donne une première lecture de H2.
+- **Ce que l'utilisateur pourra faire à la fin** : lancer `facesort-cli scan D:\Photos\2024` et lire « 812 photos analysées, 1 455 visages, 3 erreurs, 1,1 s/photo », puis `facesort-cli status`. Valide H3 et donne une première lecture de H2.
 - **Tâches incluses** : T1, T2, T3, T4.
 - **Comment le tester** : `cargo test` ; puis scénario M1 sur un vrai dossier.
 
@@ -31,16 +31,16 @@
 - **Dépend de** : aucune.
 - **Fichiers ou composants** : `Cargo.toml`, `src/lib.rs`, `src/store.rs`, `src/names.rs`, `src/bin/cli.rs`, `src/bin/gui/main.rs`, `README.md`, `.gitignore` (`/target`, `models/*.onnx`, `fixtures-private/`).
 - **À faire** :
-  1. `cargo init`, `git init`, edition 2024, lib + bins `FaceSort` et `facesort` (modèle FontLicenseClassifier).
+  1. `cargo init`, `git init`, edition 2024, lib + bins `FaceSort` et `facesort-cli` (noms distincts même sans la casse : sous Windows `FaceSort.exe` et `facesort.exe` seraient le même fichier) (modèle FontLicenseClassifier).
   2. Ajouter les dépendances avec `cargo add` (versions réelles, pas devinées) ; `ort = "=2.0.0-rc.15"`.
   3. `store` : ouverture de la base (`--db` ou `%LOCALAPPDATA%\FaceSort\facesort.db`), WAL, schéma v1, `user_version`.
   4. `names::validate_person_name` (règles F3).
   5. CLI : sous-commandes vides `scan`, `sort`, `status` avec `--help`.
   6. Vérifier que `ort` récupère et copie la DLL ONNX Runtime sous Windows (note dans README).
 - **Tests** : unitaires `names` (valides, `Tom/Léa`, `CON`, `com1`, espaces, 65 caractères) ; `store` crée et rouvre une base temporaire.
-- **Terminé quand** : `cargo test` et `cargo clippy -- -D warnings` passent ; `facesort --help` liste les trois commandes.
+- **Terminé quand** : `cargo test` et `cargo clippy -- -D warnings` passent ; `facesort-cli --help` liste les trois commandes.
 - **Couvre** : F3, F6, AC-F3-3
-- **Statut** : à faire
+- **Statut** : fait (2026-11-11 : `cargo test` 47 tests OK, `cargo clippy --all-targets -- -D warnings` OK, `facesort-cli --help` liste scan/sort/status ; CLI renommée `facesort-cli`, voir T9)
 
 ### T2 - Modèles et détection
 
@@ -55,7 +55,7 @@
 - **Tests** : nombre de visages sur `fixtures/basic` contre `expected.json` ; fixture EXIF orientation 6 vs redressée ; modèle au mauvais hash refusé.
 - **Terminé quand** : les tests passent ; un exemple `cargo run --example detect -- photo.jpg` écrit une image annotée vérifiée à l'oeil.
 - **Couvre** : F1, AC-F1-5
-- **Statut** : à faire
+- **Statut** : en grande partie fait : `tests/reference.rs` (cadres < 1 px et scores à 1e-3 près d'OpenCV 5.0) ; reste : test de détection sur `fixtures/exif` (AC-F1-5 n'est vérifié que sur les dimensions décodées)
 
 ### T3 - Alignement et empreintes
 
@@ -69,7 +69,7 @@
 - **Tests** : alignement d'un jeu de points connu (erreur < 0,5 px) ; deux photos d'une même personne plus similaires entre elles qu'avec une autre personne sur `fixtures/people3`.
 - **Terminé quand** : tests verts ; la similarité moyenne intra-personne dépasse la moyenne inter-personnes sur `fixtures/people3`.
 - **Couvre** : F1, F4
-- **Statut** : à faire
+- **Statut** : fait : `tests/reference.rs`, similarité > 0,99 avec les empreintes OpenCV ; SFace = entrée 1x3x112x112, sortie 128 (lu dans le modèle)
 
 ### T4 - Scan complet en CLI
 
@@ -81,11 +81,11 @@
   2. Détection des inchangés (chemin, taille, mtime).
   3. Pipeline parallèle `rayon` (une session `ort` par thread de travail), écriture SQLite par lots en transaction, vignettes 96 px.
   4. Erreurs par fichier collectées sans arrêter le scan ; annulation par drapeau partagé.
-  5. `facesort scan`, `facesort status [--json]`, codes de sortie 0/1/2/3, temps moyen par photo.
+  5. `facesort-cli scan`, `facesort-cli status [--json]`, codes de sortie 0/1/2/3, temps moyen par photo.
 - **Tests** : intégration `tests/scan.rs` (fixtures basic, rescan, JPEG tronqué, extensions ignorées) ; `tests/cli.rs` (codes de sortie, JSON valide).
 - **Terminé quand** : tests verts ; scénario M1 exécuté sur un vrai dossier et le temps par photo noté (H3).
 - **Couvre** : F1, F6, AC-F1-1, AC-F1-2, AC-F1-3, AC-F1-4, AC-F6-1, AC-F6-2, AC-F6-3
-- **Statut** : à faire
+- **Statut** : en cours : `facesort-cli scan fixtures/basic` donne 10 photos / 12 visages, rescan 0 photo, dossier absent code 1 (exécuté 2026-11-11) ; reste `tests/scan.rs`, `tests/cli.rs` et M1 sur un vrai dossier
 
 ### T5 - Regroupement
 
@@ -96,7 +96,7 @@
 - **Tests** : synthétiques (3 nuages bien séparés, bruit isolé, déterminisme, 5 000 empreintes < 10 s en release) ; `fixtures/people3`.
 - **Terminé quand** : tests verts.
 - **Couvre** : F2, AC-F2-1, AC-F2-2, AC-F2-3, AC-F2-4
-- **Statut** : à faire
+- **Statut** : en cours : tests unitaires synthétiques OK (pureté, isolé, déterminisme) ; reste intégration `fixtures/people3` et `perf_5000` en release
 
 ### T6 - Reconnaissance
 
@@ -107,7 +107,7 @@
 - **Tests** : synthétiques (attribution, inconnu, ambiguïté) ; intégration `people3` puis `people3_new`.
 - **Terminé quand** : tests verts.
 - **Couvre** : F4, AC-F4-1, AC-F4-2, AC-F4-3
-- **Statut** : à faire
+- **Statut** : en cours : tests unitaires OK (dont AC-F4-3) ; reste intégration `people3` puis `people3_new`
 
 ### T7 - Opérations sur les personnes
 
@@ -118,18 +118,18 @@
 - **Tests** : unitaires sur base temporaire, dont exclusion persistante après regroupement.
 - **Terminé quand** : tests verts.
 - **Couvre** : F3, AC-F3-2, AC-F3-4
-- **Statut** : à faire
+- **Statut** : fait : tests `store` (AC-F3-2, AC-F3-3, AC-F3-4) OK
 
 ### T8 - Tri par copie
 
 - **Objectif** : produire `Destination/Prénom/`.
 - **Dépend de** : T7.
 - **Fichiers ou composants** : `src/sort.rs`, `src/bin/cli.rs`.
-- **À faire** : plan de tri (copies, collisions, taille, espace libre), refus d'une destination dans une source, exécution atomique avec conservation de la mtime, journal CSV, `facesort sort [--dry-run] [--no-unknown]`.
+- **À faire** : plan de tri (copies, collisions, taille, espace libre), refus d'une destination dans une source, exécution atomique avec conservation de la mtime, journal CSV, `facesort-cli sort [--dry-run] [--no-unknown]`.
 - **Tests** : `tests/sort.rs` dans `TempDir` : multi-personnes avec SHA-256, `_Inconnus/`, collision différente et identique, second tri à 0 copie, destination en lecture seule, journal, dry-run sans écriture.
 - **Terminé quand** : tests verts.
 - **Couvre** : F5, F6, AC-F5-1, AC-F5-2, AC-F5-3, AC-F5-4, AC-F5-5, AC-F5-6, AC-F6-2
-- **Statut** : à faire
+- **Statut** : en cours : plan et aperçu testés ; exécution (`execute`) non testée, `tests/sort.rs` à écrire
 
 ### T9 - GUI : écran Analyse (E1)
 
@@ -140,7 +140,7 @@
 - **Tests** : logique de progression testée dans la lib ; vérification manuelle M2.
 - **Terminé quand** : M2 étape 1 réussie.
 - **Couvre** : F1
-- **Statut** : à faire
+- **Statut** : fait côté code (2026-11-11), vérification manuelle restante : compilation et clippy OK, progression testée (`scan::tests::progress_fraction_and_eta`), fenêtre lancée 5 s sans erreur ; à vérifier à la main (M2 étape 1) : choix du dossier, barre de progression, Annuler, résumé, liste d'erreurs
 
 ### T10 - GUI : écrans Personnes et Tri (E2, E3)
 
@@ -162,7 +162,7 @@
 - **Tests** : l'exemple lui-même ; résultats notés dans README.
 - **Terminé quand** : précision au moins 95 % et rappel au moins 85 % atteints, ou décision consignée (F10, F8, ou seuils plus prudents).
 - **Couvre** : F2, F4
-- **Statut** : à faire
+- **Statut** : en cours : `examples/eval.rs` ; paires sur `fixtures/people3` : séparation parfaite entre 0,40 et 0,55 ; bug : la partie « chaîne complète » renvoie 0 (copie de base sans checkpoint WAL) ; reste le jeu de 200 photos personnelles
 
 ### T12 - Paquet portable et validation
 

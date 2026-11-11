@@ -14,7 +14,7 @@
 | Stockage | SQLite via `rusqlite` 0.42 `bundled`, `%LOCALAPPDATA%\FaceSort\facesort.db` | Base embarquée, une source de vérité partagée GUI/CLI, déjà utilisée dans tes projets | Fichiers JSON (pas de requêtes, écritures non atomiques) |
 | Serveur / services | Sans objet : tout est local | Aucune donnée partagée, aucune clé, aucun traitement en absence de l'utilisateur | - |
 | Tests | `cargo test` : unitaires + intégration sur fixtures | Une commande | - |
-| Distribution | Dossier portable : `FaceSort.exe`, `facesort.exe`, DLL ONNX Runtime, `models/` | Usage personnel ; pas d'installeur nécessaire | Installeur MSI (V2 si diffusion) |
+| Distribution | Dossier portable : `FaceSort.exe`, `facesort-cli.exe`, ONNX Runtime lié statiquement (+ `DirectML.dll` à vérifier), `models/` | Usage personnel ; pas d'installeur nécessaire | Installeur MSI (V2 si diffusion) |
 
 ## 2. Contexte existant
 
@@ -25,7 +25,7 @@ Nouveau projet, aucun code existant. Conventions reprises des projets voisins : 
 ```mermaid
 flowchart LR
   GUI[FaceSort.exe egui] --> LIB
-  CLI[facesort.exe clap] --> LIB
+  CLI[facesort-cli.exe clap] --> LIB
   subgraph LIB[lib facesort]
     SCAN[scan: walkdir + image + EXIF] --> DET[detect: YuNet ort]
     DET --> ALIGN[align: 5 points -> 112x112]
@@ -135,7 +135,7 @@ Fixtures versionnées : uniquement des images libres de droits avec visages (sou
 
 ```
 FaceSort/
-  Cargo.toml            # [lib] facesort, [[bin]] FaceSort (GUI), [[bin]] facesort (CLI)
+  Cargo.toml            # [lib] facesort, [[bin]] FaceSort (GUI), [[bin]] facesort-cli (CLI)
   README.md
   models/SHA256SUMS     # les .onnx sont téléchargés, non versionnés
   scripts/fetch-models.ps1, package.ps1

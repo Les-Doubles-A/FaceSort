@@ -30,6 +30,39 @@ pub struct Progress {
     pub current: Option<PathBuf>,
 }
 
+impl Progress {
+    /// Avancement entre 0 et 1 (1 si rien à analyser).
+    pub fn fraction(&self) -> f32 {
+        if self.total == 0 { 1.0 } else { (self.done as f32 / self.total as f32).clamp(0.0, 1.0) }
+    }
+
+    /// Temps restant estimé au rythme moyen observé (`None` avant la première photo).
+    pub fn eta(&self, elapsed: Duration) -> Option<Duration> {
+        if self.done == 0 || self.done >= self.total {
+            return None;
+        }
+        let per = elapsed.as_secs_f64() / self.done as f64;
+        Some(Duration::from_secs_f64(per * (self.total - self.done) as f64))
+    }
+
+    /// « 120/1 240 photos, 230 visages, 2 erreurs ».
+    pub fn label(&self) -> String {
+        format!("{}/{} photos, {} visages, {} erreurs", self.done, self.total, self.faces, self.errors)
+    }
+}
+
+/// Durée lisible : « 45 s », « 3 min 05 s », « 1 h 12 min ».
+pub fn human_duration(d: Duration) -> String {
+    let s = d.as_secs();
+    if s < 60 {
+        format!("{s} s")
+    } else if s < 3600 {
+        format!("{} min {:02} s", s / 60, s % 60)
+    } else {
+        format!("{} h {:02} min", s / 3600, (s % 3600) / 60)
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ScanReport {
     pub analyzed: usize,
@@ -91,10 +124,11 @@ pub struct FileEntry {
     pub mtime: i64,
 }
 
+/// Fichier et raison de l'erreur.
+pub type FileErrors = Vec<(PathBuf, String)>;
+
 /// Parcours récursif : fichiers pris en charge, extensions ignorées, erreurs d'accès.
-pub fn collect_files(
-    roots: &[PathBuf],
-) -> (Vec<FileEntry>, BTreeMap<String, usize>, Vec<(PathBuf, String)>) {
+pub fn collect_files(roots: &[PathBuf]) -> (Vec<FileEntry>, BTreeMap<String, usize>, FileErrors) {
     let mut files = Vec::new();
     let mut ignored = BTreeMap::new();
     let mut errors = Vec::new();
@@ -265,6 +299,23 @@ mod tests {
         assert!(errors.is_empty());
         let r = ScanReport { ignored, ..Default::default() };
         assert_eq!(r.ignored_summary(), "ignorés : 2 .heic, 1 (sans extension), 1 .mp4");
+    }
+
+    #[test]
+    fn progress_fraction_and_eta() {
+        let p = Progress { total: 10, done: 4, ..Default::default() };
+        assert!((p.fraction() - 0.4).abs() < 1e-6);
+        assert_eq!(p.eta(Duration::from_secs(8)), Some(Duration::from_secs(12)));
+        assert_eq!(Progress { total: 10, done: 0, ..Default::default() }.eta(Duration::from_secs(1)), None);
+        assert_eq!(Progress { total: 10, done: 10, ..Default::default() }.eta(Duration::from_secs(1)), None);
+        assert_eq!(Progress::default().fraction(), 1.0);
+    }
+
+    #[test]
+    fn durations() {
+        assert_eq!(human_duration(Duration::from_secs(45)), "45 s");
+        assert_eq!(human_duration(Duration::from_secs(185)), "3 min 05 s");
+        assert_eq!(human_duration(Duration::from_secs(4320)), "1 h 12 min");
     }
 
     #[test]

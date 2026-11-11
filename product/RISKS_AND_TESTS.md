@@ -77,7 +77,7 @@
 ### M1 - Scan d'un vrai dossier (tranche 1)
 
 - **Préparation** : un dossier réel de 500 photos au moins ; modèles téléchargés.
-- **Étapes** : `facesort scan <dossier>` ; noter durée et temps par photo ; `facesort status` ; relancer le scan.
+- **Étapes** : `facesort-cli scan <dossier>` ; noter durée et temps par photo ; `facesort-cli status` ; relancer le scan.
 - **Résultat attendu** : résumé cohérent, extensions ignorées listées, second scan à 0 photo analysée, temps moyen noté pour H3.
 - **Critères couverts** : AC-F1-1, AC-F1-2, AC-F1-4 (en conditions réelles).
 

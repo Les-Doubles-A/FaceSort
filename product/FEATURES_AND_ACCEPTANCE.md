@@ -34,9 +34,9 @@
 
 ### P2 - Tri d'un nouveau dossier avec la base existante
 
-1. L'utilisateur scanne un nouveau dossier (GUI ou `facesort scan <dossier>`).
+1. L'utilisateur scanne un nouveau dossier (GUI ou `facesort-cli scan <dossier>`).
 2. Les visages proches d'une personne nommée lui sont attribués automatiquement (F4) ; les autres sont regroupés (F2).
-3. Il nomme seulement les nouveaux groupes, puis trie (GUI ou `facesort sort <destination>`).
+3. Il nomme seulement les nouveaux groupes, puis trie (GUI ou `facesort-cli sort <destination>`).
 
 ## 3. Écrans et surfaces
 
@@ -45,7 +45,7 @@
 | E1 | Accueil / Analyse | Choisir un dossier source, lancer le scan | « Aucun dossier analysé » + bouton « Choisir un dossier » | Barre de progression, compteurs, bouton Annuler | Liste repliable des fichiers en erreur avec la raison | « 1 240 photos, 2 310 visages, 12 erreurs » + bouton « Voir les personnes » |
 | E2 | Personnes | Nommer, fusionner, corriger | « Aucun visage à nommer » + lien vers E1 | Vignettes chargées progressivement | Message si une vignette ne peut pas être lue (fichier déplacé) | Groupe nommé affiché dans la colonne « Personnes nommées » |
 | E3 | Tri | Choisir la destination, aperçu, copie | « Aucune personne nommée » + lien vers E2 | Progression de copie, bouton Annuler | Erreur d'écriture : message, arrêt propre, chemin du journal | « 1 830 copies, 4,2 Go, journal : … » + bouton « Ouvrir le dossier » |
-| E4 | CLI `facesort` | `scan`, `sort`, `status` | `status` sur base vide : « Base vide » | Progression sur stderr | Message sur stderr, code de sortie non nul | Résumé sur stdout, ou JSON avec `--json` |
+| E4 | CLI `facesort-cli` | `scan`, `sort`, `status` | `status` sur base vide : « Base vide » | Progression sur stderr | Message sur stderr, code de sortie non nul | Résumé sur stdout, ou JSON avec `--json` |
 
 ## 4. Spécifications du MVP
 
@@ -118,12 +118,12 @@
 ### F6 - CLI
 
 - **Objectif** : piloter scan et tri sans fenêtre, partager la base avec la GUI.
-- **Comportement attendu** : `facesort scan <dossier>...`, `facesort sort <destination> [--dry-run] [--no-unknown]`, `facesort status` (personnes, visages, photos), `--help` sur chaque commande, `--json` pour une sortie machine.
+- **Comportement attendu** : `facesort-cli scan <dossier>...`, `facesort-cli sort <destination> [--dry-run] [--no-unknown]`, `facesort-cli status` (personnes, visages, photos), `--help` sur chaque commande, `--json` pour une sortie machine.
 - **Critères d'acceptation** :
-  - **AC-F6-1** - `facesort --help` et `facesort <commande> --help` décrivent chaque option avec un exemple.
+  - **AC-F6-1** - `facesort-cli --help` et `facesort-cli <commande> --help` décrivent chaque option avec un exemple.
   - **AC-F6-2** - Codes de sortie : 0 succès, 1 erreur fatale (dossier inexistant, base illisible), 2 arguments invalides, 3 succès partiel (au moins un fichier en erreur).
-  - **AC-F6-3** - `facesort status --json` produit un JSON valide contenant `persons`, `faces`, `photos`, `unassigned_faces`.
-  - **AC-F6-4** - Une personne nommée dans la GUI apparaît dans `facesort status` sans autre action (base partagée).
+  - **AC-F6-3** - `facesort-cli status --json` produit un JSON valide contenant `persons`, `faces`, `photos`, `unassigned_faces`.
+  - **AC-F6-4** - Une personne nommée dans la GUI apparaît dans `facesort-cli status` sans autre action (base partagée).
 - **Vérification** : automatique (tests d'intégration du binaire).
 
 ## 5. Permissions et données sensibles

@@ -83,7 +83,9 @@ mod tests {
     use super::*;
     use crate::cluster::tests::{Rng, around};
 
-    fn refs(rng: &mut Rng) -> (Vec<f32>, Vec<f32>, Vec<(i64, Vec<f32>)>) {
+    type Refs = Vec<(i64, Vec<f32>)>;
+
+    fn refs(rng: &mut Rng) -> (Vec<f32>, Vec<f32>, Refs) {
         let a = rng.unit(128);
         let b = rng.unit(128);
         let mut r = Vec::new();

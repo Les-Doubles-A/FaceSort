@@ -71,7 +71,7 @@ fn main() {
         cluster: ClusterParams { threshold: 2.0, min_samples: 2 },
         recognize: RecognizeParams::default(),
     };
-    let report = scan::scan(&mut store, &mut engine, &[dir.clone()], no_cluster, |_| {}, &cancel).expect("analyse");
+    let report = scan::scan(&mut store, &mut engine, std::slice::from_ref(&dir), no_cluster, |_| {}, &cancel).expect("analyse");
     println!("Analyse : {}", report.summary());
 
     // 1. Paires

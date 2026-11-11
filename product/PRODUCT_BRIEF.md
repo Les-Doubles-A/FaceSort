@@ -57,7 +57,7 @@ La tranche 1 (scan CLI qui compte les visages) valide déjà H3 et donne une pre
 |---|---|---|---|
 | Tri fiable | Part des copies correctes (bonne personne) sur le jeu de 200 photos | au moins 95 % de copies correctes, au moins 85 % des apparitions de personnes nommées trouvées | Jeu annoté, T11 |
 | Effort de nommage raisonnable | Temps de nommage pour 1 000 photos | moins de 15 minutes | Chronomètre, scénario M3 |
-| Performance | Temps de scan moyen par photo (CPU) | moins de 2 s | Sortie de `facesort scan`, H3 |
+| Performance | Temps de scan moyen par photo (CPU) | moins de 2 s | Sortie de `facesort-cli scan`, H3 |
 | Usage réel | Dossiers triés sur deux semaines | au moins 2 dossiers réels | Auto-observation |
 
 ## 9. Périmètre du MVP
