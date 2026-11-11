@@ -150,7 +150,7 @@ fn full_journey_people3() {
 
     // Tri comme dans l'écran Tri
     let out = d.path().join("tri");
-    let plan = sort::plan(&s.photos_for_sort().unwrap(), &s.roots().unwrap(), &SortOptions { dest: out.clone(), include_unknown: true })
+    let plan = sort::plan(&s.photos_for_sort().unwrap(), &s.roots().unwrap(), &SortOptions::new(out.clone(), true))
         .unwrap();
     assert_eq!(plan.per_person["Barack"].copies, 9);
     assert_eq!(plan.per_person["Joe"].copies, 6);

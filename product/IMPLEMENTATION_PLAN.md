@@ -175,6 +175,16 @@
 - **Couvre** : F5, F6, AC-F5-5, AC-F6-1
 - **Statut** : fait (2026-11-11) : `scripts/package.ps1` construit `dist/FaceSort-<version>-portable/` (exécutables, `DirectML.dll`, runtime Visual C++ en local, modèles, licences), le zip et l'installeur Inno Setup (`installer/FaceSort.iss`) ; contrôle de démarrage de la CLI depuis le dossier portable ; icône `FaceSort.ico` intégrée aux exécutables et à la fenêtre ; README et `THIRD_PARTY_NOTICES.md` ; publié sur https://github.com/Les-Doubles-A/FaceSort. Reste à vérifier à la main : M4 (installation sur un PC sans Visual Studio, disque plein)
 
+### T13 - Dossiers spéciaux et défilement (demande du 2026-11-11)
+
+- **Objectif** : dossiers de tri définis par l'utilisateur ; défilement dans tous les onglets.
+- **Dépend de** : T8, T10.
+- **Fichiers ou composants** : `src/sort.rs` (`MatchMode`, `SpecialFolder`, `folders_for`), `src/store.rs` (tables `special_folders`, `special_folder_persons`, schéma 3), `src/bin/gui/tri.rs`, `src/bin/gui/app.rs` (une zone défilante par onglet), `src/bin/cli.rs` (`--no-person-folders`).
+- **Tests** : unitaires (règles, combinaison, enregistrement, renommage, fusion), `tests/cli.rs::sort_uses_special_folders`.
+- **Terminé quand** : tests verts ; écran vérifié à la main.
+- **Couvre** : F13, AC-F13-1, AC-F13-2, AC-F13-3, AC-F13-4
+- **Statut** : fait côté code (2026-11-11) : 66 tests unitaires et 14 d'intégration OK, clippy propre, migration schéma 2 vers 3 vérifiée sur une base existante, fenêtre lancée sans erreur ; à vérifier à la main : formulaire, liste, défilement de chaque onglet
+
 ## 5. Peut attendre
 
 | Élément | Pourquoi attendre | Déclencheur |

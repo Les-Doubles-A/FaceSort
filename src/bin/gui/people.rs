@@ -254,7 +254,7 @@ pub fn show(app: &mut FaceSortApp, ui: &mut egui::Ui) {
     }
 
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    ui.scope(|ui| {
         groups_section(app, ui, &mut actions);
         ui.add_space(14.0);
         persons_section(app, ui, &mut actions);

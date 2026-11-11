@@ -81,3 +81,41 @@ fn status_sees_named_person() {
     assert_eq!(v["people"][0]["name"], "Léa");
     assert_eq!(v["people"][0]["faces"], 2);
 }
+
+/// Dossiers spéciaux créés dans la base (onglet Tri) : utilisés par `sort`.
+#[test]
+fn sort_uses_special_folders() {
+    use facesort::sort::MatchMode;
+    use facesort::store::Assignment;
+    let d = tempfile::tempdir().unwrap();
+    let db = d.path().join("t.db");
+    let src = d.path().join("photos");
+    std::fs::create_dir_all(&src).unwrap();
+    let duo = src.join("duo.jpg");
+    let solo = src.join("solo.jpg");
+    std::fs::write(&duo, b"duo").unwrap();
+    std::fs::write(&solo, b"solo").unwrap();
+    {
+        let mut s = Store::open(&db).unwrap();
+        s.add_root(&src).unwrap();
+        s.save_photo(&duo, 3, 1, "x", (100, 100), &[face(0.0), face(1.0)]).unwrap();
+        s.save_photo(&solo, 4, 1, "y", (100, 100), &[face(2.0)]).unwrap();
+        let lea = s.create_person("Léa").unwrap();
+        let tom = s.create_person("Tom").unwrap();
+        s.assign_faces(&[1, 3], lea, Assignment::Manual).unwrap();
+        s.assign_faces(&[2], tom, Assignment::Manual).unwrap();
+        s.save_special_folder(None, "Parents", MatchMode::All, &[lea, tom]).unwrap().unwrap();
+    }
+    let out = d.path().join("tri");
+    let run = |extra: &[&str]| {
+        let o = cli().arg("--db").arg(&db).arg("sort").arg(&out).args(["--dry-run", "--json"]).args(extra).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap()
+    };
+    let v = run(&[]);
+    assert_eq!(v["per_person"]["Parents"]["copies"], 1);
+    assert_eq!(v["per_person"]["Léa"]["copies"], 2);
+    let v = run(&["--no-person-folders"]);
+    let keys: Vec<&String> = v["per_person"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, vec!["Parents"]);
+}

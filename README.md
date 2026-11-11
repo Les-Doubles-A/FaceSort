@@ -24,7 +24,9 @@ Windows 10 ou 11, 64 bits. Les modèles de reconnaissance sont inclus (environ 3
    - « Relancer la reconnaissance » attribue aux personnes nommées les visages qui leur ressemblent.
 3. **Tri** : choisis un dossier de destination, regarde l'aperçu (copies par personne, taille, espace libre), puis « Copier ». Une photo avec plusieurs personnes est copiée dans le dossier de chacune ; les photos sans personne nommée vont dans `_Inconnus\` (désactivable). Un journal CSV est écrit dans la destination.
 
-Les originaux ne sont jamais modifiés. Relancer un tri ne recopie pas les photos déjà présentes.
+   - **Dossiers spéciaux** : crée tes propres dossiers selon une règle, par exemple « Parents » = les photos où Léa et Tom sont **ensemble**, « Cousins » = les photos avec **au moins un** des cousins, « Léa seule » = **uniquement** Léa. Ils sont enregistrés et suivent les renommages. La case « Créer un dossier par personne » peut être décochée pour n'avoir que tes dossiers spéciaux.
+
+Les originaux ne sont jamais modifiés. Relancer un tri ne recopie pas les photos déjà présentes. Chaque onglet défile si son contenu dépasse la fenêtre.
 
 ## Modèles de reconnaissance
 
@@ -50,7 +52,8 @@ Les empreintes faciales associées à des prénoms sont des données biométriqu
 facesort-cli scan D:\Photos\2024          analyse un dossier
 facesort-cli status                       photos, visages, personnes, modèle
 facesort-cli sort E:\Tri --dry-run        aperçu du tri, rien n'est écrit
-facesort-cli sort E:\Tri                  copie
+facesort-cli sort E:\Tri                  copie (dossiers par personne et dossiers spéciaux)
+facesort-cli sort E:\Tri --no-person-folders   dossiers spéciaux seulement
 facesort-cli convert --model auraface     change de modèle sans perdre les noms
 ```
 

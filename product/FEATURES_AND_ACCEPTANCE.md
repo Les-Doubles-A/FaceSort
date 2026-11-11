@@ -12,6 +12,7 @@
 | F4 | Reconnaissance des nouveaux visages contre les personnes déjà nommées | MVP | C'est la « base visage + prénom » demandée : un second dossier se trie sans tout renommer |
 | F5 | Tri par copie dans `Destination/Prénom/` avec aperçu et journal | MVP | Le résultat promis |
 | F6 | Commandes CLI `scan`, `sort`, `status` | MVP | Choix de l'utilisateur (GUI + CLI) ; tri en lot et tests d'intégration simples |
+| F13 | Dossiers spéciaux dans l'onglet Tri (ajout du 2026-11-11, demande de l'utilisateur) | MVP | Regrouper des photos selon une règle sur les personnes (ex. « Parents » = Léa et Tom ensemble) |
 | F7 | Déplacement ou liens physiques au lieu de copie | V2 | Copie choisie pour le MVP ; déplacer impose un journal d'annulation |
 | F8 | Accélération GPU (DirectML) | V2 | Seulement si H3 échoue |
 | F9 | HEIC et RAW | V2 | Selon le comptage H5 |
@@ -125,6 +126,18 @@
   - **AC-F6-3** - `facesort-cli status --json` produit un JSON valide contenant `persons`, `faces`, `photos`, `unassigned_faces`.
   - **AC-F6-4** - Une personne nommée dans la GUI apparaît dans `facesort-cli status` sans autre action (base partagée).
 - **Vérification** : automatique (tests d'intégration du binaire).
+
+### F13 - Dossiers spéciaux
+
+- **Objectif** : créer des dossiers de tri définis par l'utilisateur, en plus (ou à la place) des dossiers par personne.
+- **Comportement attendu** : dans l'onglet Tri, l'utilisateur crée un dossier spécial (nom, règle, personnes) ; règles : « au moins une de ces personnes », « toutes ces personnes ensemble », « uniquement ces personnes » (aucune autre personne nommée). Les dossiers sont enregistrés dans la base (schéma 3) et référencent les personnes par identifiant : un renommage ou une fusion est suivi. Option « Créer un dossier par personne » (désactivable). CLI : `sort` applique les dossiers spéciaux, `--no-person-folders` désactive les dossiers par personne.
+- **Règles et limites** : nom validé comme un prénom (nom de dossier Windows) ; refusé s'il est déjà le nom d'une personne ou d'un autre dossier spécial ; au moins une personne.
+- **Critères d'acceptation** :
+  - **AC-F13-1** - Avec un dossier « Parents » (toutes ensemble : Léa, Tom), une photo de Léa et Tom est copiée dans `Parents\` et une photo de Léa seule ne l'est pas.
+  - **AC-F13-2** - Les trois règles donnent le résultat attendu pour une photo avec {Léa}, {Léa, Tom}, {Léa, Tom, Zoé}, {Zoé}, {}.
+  - **AC-F13-3** - Un nom invalide, déjà pris par une personne ou un dossier, ou une sélection vide est refusé avec un message ; renommer ou fusionner une personne met le dossier à jour.
+  - **AC-F13-4** - Sans dossier par personne, seules les copies vers les dossiers spéciaux (et `_Inconnus`) sont prévues.
+- **Vérification** : automatique ; écran à vérifier à la main (M2).
 
 ## 5. Permissions et données sensibles
 

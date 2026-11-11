@@ -2,8 +2,9 @@
 
 use crate::app::{FaceSortApp, Tab};
 use eframe::egui::{self, Color32, RichText};
-use facesort::sort::{self, Plan, SortOptions, SortReport};
+use facesort::sort::{self, MatchMode, Plan, SortOptions, SortReport, SpecialFolder};
 use facesort::util::human_size;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,9 +24,28 @@ pub struct SortJob {
     total: usize,
 }
 
+/// Formulaire de création ou de modification d'un dossier spécial.
+pub struct SpecialEditor {
+    /// None : nouveau dossier.
+    pub id: Option<i64>,
+    pub name: String,
+    pub mode: MatchMode,
+    pub persons: BTreeSet<i64>,
+    pub error: Option<String>,
+}
+
+impl Default for SpecialEditor {
+    fn default() -> Self {
+        Self { id: None, name: String::new(), mode: MatchMode::All, persons: BTreeSet::new(), error: None }
+    }
+}
+
 pub struct TriState {
     pub dest: Option<PathBuf>,
     pub include_unknown: bool,
+    /// Créer un dossier par personne (en plus des dossiers spéciaux).
+    pub per_person: bool,
+    pub editor: SpecialEditor,
     pub plan: Option<Result<Plan, String>>,
     pub job: Option<SortJob>,
     pub report: Option<SortReport>,
@@ -33,7 +53,15 @@ pub struct TriState {
 
 impl Default for TriState {
     fn default() -> Self {
-        Self { dest: None, include_unknown: true, plan: None, job: None, report: None }
+        Self {
+            dest: None,
+            include_unknown: true,
+            per_person: true,
+            editor: SpecialEditor::default(),
+            plan: None,
+            job: None,
+            report: None,
+        }
     }
 }
 
@@ -77,10 +105,129 @@ fn compute_plan(app: &mut FaceSortApp) {
     let result = (|| -> facesort::Result<Plan> {
         let photos = store.photos_for_sort()?;
         let roots = store.roots()?;
-        sort::plan(&photos, &roots, &SortOptions { dest, include_unknown: app.tri.include_unknown })
+        let mut opts = SortOptions::new(dest, app.tri.include_unknown);
+        opts.per_person = app.tri.per_person;
+        opts.special = store.special_folders()?;
+        sort::plan(&photos, &roots, &opts)
     })();
     app.tri.plan = Some(result.map_err(|e| e.to_string()));
     app.tri.report = None;
+}
+
+enum SpecialAction {
+    Edit(SpecialFolder),
+    Delete(i64),
+    Save,
+    Cancel,
+}
+
+/// Section « Dossiers spéciaux » : liste, modification, création.
+fn special_section(app: &mut FaceSortApp, ui: &mut egui::Ui) {
+    let specials = app.store.as_ref().and_then(|s| s.special_folders().ok()).unwrap_or_default();
+    let persons = app.store.as_ref().and_then(|s| s.persons().ok()).unwrap_or_default();
+    let mut action = None;
+    egui::CollapsingHeader::new(RichText::new(format!("Dossiers spéciaux ({})", specials.len())).strong())
+        .id_salt("dossiers_speciaux")
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "Un dossier spécial regroupe des photos selon une règle, par exemple « Parents » = les photos où Léa et Tom sont ensemble.",
+                )
+                .small(),
+            );
+            for f in &specials {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&f.name).strong());
+                    ui.label(format!(": {}", f.describe()));
+                    if ui.small_button("Modifier").clicked() {
+                        action = Some(SpecialAction::Edit(f.clone()));
+                    }
+                    if ui.small_button("Supprimer").on_hover_text("Supprime la règle, pas les photos déjà copiées").clicked() {
+                        action = Some(SpecialAction::Delete(f.id));
+                    }
+                });
+            }
+            ui.add_space(6.0);
+            if persons.is_empty() {
+                ui.label("Nommez d'abord des personnes dans l'onglet Personnes pour créer un dossier spécial.");
+                return;
+            }
+            egui::Frame::group(ui.style()).inner_margin(8.0).show(ui, |ui| {
+                let ed = &mut app.tri.editor;
+                let title = match ed.id {
+                    Some(_) => "Modifier le dossier spécial",
+                    None => "Nouveau dossier spécial",
+                };
+                ui.label(RichText::new(title).strong());
+                ui.horizontal(|ui| {
+                    ui.label("Nom du dossier :");
+                    ui.add(egui::TextEdit::singleline(&mut ed.name).hint_text("ex. Parents").desired_width(220.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Photos contenant :");
+                    egui::ComboBox::from_id_salt("regle_speciale").selected_text(ed.mode.label()).show_ui(ui, |ui| {
+                        for m in MatchMode::ALL {
+                            ui.selectable_value(&mut ed.mode, m, m.label());
+                        }
+                    });
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for p in &persons {
+                        let mut on = ed.persons.contains(&p.id);
+                        if ui.checkbox(&mut on, &p.name).changed() {
+                            if on {
+                                ed.persons.insert(p.id);
+                            } else {
+                                ed.persons.remove(&p.id);
+                            }
+                        }
+                    }
+                });
+                if let Some(e) = &ed.error {
+                    ui.colored_label(ERROR_COLOR, e);
+                }
+                ui.horizontal(|ui| {
+                    let label = if ed.id.is_some() { "Enregistrer" } else { "Créer le dossier" };
+                    if ui.button(RichText::new(label).strong()).clicked() {
+                        action = Some(SpecialAction::Save);
+                    }
+                    if (ed.id.is_some() || !ed.name.is_empty() || !ed.persons.is_empty()) && ui.button("Annuler").clicked() {
+                        action = Some(SpecialAction::Cancel);
+                    }
+                });
+            });
+        });
+    let Some(action) = action else { return };
+    let Some(store) = &mut app.store else { return };
+    match action {
+        SpecialAction::Edit(f) => {
+            app.tri.editor =
+                SpecialEditor { id: Some(f.id), name: f.name, mode: f.mode, persons: f.person_ids, error: None };
+        }
+        SpecialAction::Delete(id) => {
+            if let Err(e) = store.delete_special_folder(id) {
+                app.tri.editor.error = Some(e.to_string());
+            }
+            if app.tri.editor.id == Some(id) {
+                app.tri.editor = SpecialEditor::default();
+            }
+            app.tri.invalidate();
+        }
+        SpecialAction::Save => {
+            let ed = &app.tri.editor;
+            let ids: Vec<i64> = ed.persons.iter().copied().collect();
+            match store.save_special_folder(ed.id, &ed.name, ed.mode, &ids) {
+                Ok(Ok(_)) => {
+                    app.tri.editor = SpecialEditor::default();
+                    app.tri.invalidate();
+                }
+                Ok(Err(msg)) => app.tri.editor.error = Some(msg),
+                Err(e) => app.tri.editor.error = Some(e.to_string()),
+            }
+        }
+        SpecialAction::Cancel => app.tri.editor = SpecialEditor::default(),
+    }
 }
 
 fn start(app: &mut FaceSortApp, ctx: &egui::Context) {
@@ -159,13 +306,18 @@ pub fn show(app: &mut FaceSortApp, ui: &mut egui::Ui) {
             app.tri.report = None;
         }
     });
+    if ui.checkbox(&mut app.tri.per_person, "Créer un dossier par personne").changed() {
+        app.tri.invalidate();
+    }
     if ui
         .checkbox(&mut app.tri.include_unknown, "Copier les photos sans personne nommée dans « _Inconnus »")
         .changed()
     {
         app.tri.invalidate();
     }
-    ui.label(RichText::new("Les originaux ne sont jamais modifiés : chaque photo est copiée dans le dossier de chaque personne présente.").small());
+    ui.label(RichText::new("Les originaux ne sont jamais modifiés : chaque photo est copiée dans chaque dossier qui la concerne.").small());
+    ui.add_space(6.0);
+    special_section(app, ui);
     ui.add_space(6.0);
     if ui.add_enabled(app.tri.dest.is_some(), egui::Button::new("Calculer l'aperçu")).clicked() {
         compute_plan(app);
@@ -186,8 +338,20 @@ pub fn show(app: &mut FaceSortApp, ui: &mut egui::Ui) {
                     ui.label(RichText::new("Taille").strong());
                     ui.label(RichText::new("Déjà présentes").strong());
                     ui.end_row();
+                    let special: BTreeSet<String> = app
+                        .store
+                        .as_ref()
+                        .and_then(|st| st.special_folders().ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|f| f.name)
+                        .collect();
                     for (name, p) in &plan.per_person {
-                        ui.label(name);
+                        if special.contains(name) {
+                            ui.label(format!("{name} (spécial)"));
+                        } else {
+                            ui.label(name);
+                        }
                         ui.label(p.copies.to_string());
                         ui.label(human_size(p.bytes));
                         ui.label(p.already_present.to_string());

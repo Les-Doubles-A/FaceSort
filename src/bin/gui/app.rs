@@ -306,10 +306,18 @@ impl eframe::App for FaceSortApp {
             });
         });
 
-        egui::CentralPanel::default().show(ui, |ui| match self.tab {
-            Tab::Analyse => crate::analyse::show(self, ui),
-            Tab::Personnes => crate::people::show(self, ui),
-            Tab::Tri => crate::tri::show(self, ui),
+        egui::CentralPanel::default().show(ui, |ui| {
+            // Une seule zone défilante par onglet (id distinct : chaque onglet garde sa position).
+            let id = match self.tab {
+                Tab::Analyse => "defilement_analyse",
+                Tab::Personnes => "defilement_personnes",
+                Tab::Tri => "defilement_tri",
+            };
+            egui::ScrollArea::vertical().id_salt(id).auto_shrink([false, false]).show(ui, |ui| match self.tab {
+                Tab::Analyse => crate::analyse::show(self, ui),
+                Tab::Personnes => crate::people::show(self, ui),
+                Tab::Tri => crate::tri::show(self, ui),
+            });
         });
     }
 }

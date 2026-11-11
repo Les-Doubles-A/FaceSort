@@ -8,15 +8,118 @@ use crate::names::UNKNOWN_DIR;
 use crate::store::PhotoPersons;
 use crate::{Error, Result, util};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Règle d'un dossier spécial.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchMode {
+    /// La photo contient au moins une des personnes.
+    Any,
+    /// La photo contient toutes les personnes (ensemble).
+    All,
+    /// La photo contient exactement ces personnes, aucune autre personne nommée.
+    Only,
+}
+
+impl MatchMode {
+    pub const ALL: [MatchMode; 3] = [MatchMode::Any, MatchMode::All, MatchMode::Only];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MatchMode::Any => "any",
+            MatchMode::All => "all",
+            MatchMode::Only => "only",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+
+    /// Libellé pour l'interface.
+    pub fn label(self) -> &'static str {
+        match self {
+            MatchMode::Any => "au moins une de ces personnes",
+            MatchMode::All => "toutes ces personnes ensemble",
+            MatchMode::Only => "uniquement ces personnes",
+        }
+    }
+}
+
+/// Dossier de tri défini par l'utilisateur, par exemple « Parents » = les
+/// photos où Léa et Tom sont ensemble.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SpecialFolder {
+    pub id: i64,
+    pub name: String,
+    pub mode: MatchMode,
+    /// Prénoms (résolus depuis la base au moment de la lecture).
+    pub persons: BTreeSet<String>,
+    #[serde(skip)]
+    pub person_ids: BTreeSet<i64>,
+}
+
+impl SpecialFolder {
+    /// La photo, qui contient les personnes nommées `present`, va-t-elle dans ce dossier ?
+    pub fn matches(&self, present: &BTreeSet<String>) -> bool {
+        if self.persons.is_empty() {
+            return false;
+        }
+        match self.mode {
+            MatchMode::Any => !self.persons.is_disjoint(present),
+            MatchMode::All => self.persons.is_subset(present),
+            MatchMode::Only => self.persons == *present,
+        }
+    }
+
+    /// « Léa + Tom (toutes ces personnes ensemble) ».
+    pub fn describe(&self) -> String {
+        let names: Vec<&str> = self.persons.iter().map(String::as_str).collect();
+        format!("{} ({})", names.join(" + "), self.mode.label())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SortOptions {
     pub dest: PathBuf,
     pub include_unknown: bool,
+    /// Créer un dossier par personne nommée.
+    pub per_person: bool,
+    /// Dossiers spéciaux à remplir en plus.
+    pub special: Vec<SpecialFolder>,
+}
+
+impl SortOptions {
+    /// Un dossier par personne, `_Inconnus` selon `include_unknown`, pas de dossier spécial.
+    pub fn new(dest: PathBuf, include_unknown: bool) -> Self {
+        Self { dest, include_unknown, per_person: true, special: Vec::new() }
+    }
+}
+
+/// Dossiers où copier une photo, sans doublon (casse ignorée, comme Windows).
+pub fn folders_for(photo: &PhotoPersons, opts: &SortOptions) -> Vec<String> {
+    let mut folders: Vec<String> = Vec::new();
+    let mut push = |name: &str| {
+        if !folders.iter().any(|f| f.to_lowercase() == name.to_lowercase()) {
+            folders.push(name.to_string());
+        }
+    };
+    if opts.per_person {
+        photo.persons.iter().for_each(|p| push(p));
+    }
+    for sf in &opts.special {
+        if sf.matches(&photo.persons) {
+            push(&sf.name);
+        }
+    }
+    if photo.persons.is_empty() && photo.has_unknown && opts.include_unknown {
+        push(UNKNOWN_DIR);
+    }
+    folders
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -177,10 +280,7 @@ pub fn plan(photos: &[PhotoPersons], roots: &[PathBuf], opts: &SortOptions) -> R
     let mut total_bytes = 0;
     let mut missing_sources = 0;
     for photo in photos {
-        let mut folders: Vec<String> = photo.persons.iter().cloned().collect();
-        if folders.is_empty() && photo.has_unknown && opts.include_unknown {
-            folders.push(UNKNOWN_DIR.to_string());
-        }
+        let folders = folders_for(photo, opts);
         if folders.is_empty() {
             continue;
         }
@@ -394,6 +494,74 @@ mod tests {
         }
     }
 
+    fn folder(name: &str, mode: MatchMode, persons: &[&str]) -> SpecialFolder {
+        SpecialFolder {
+            id: 0,
+            name: name.into(),
+            mode,
+            persons: persons.iter().map(|s| s.to_string()).collect(),
+            person_ids: BTreeSet::new(),
+        }
+    }
+
+    fn set(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn special_folder_modes() {
+        let any = folder("Cousins", MatchMode::Any, &["Léa", "Tom"]);
+        let all = folder("Parents", MatchMode::All, &["Léa", "Tom"]);
+        let only = folder("Duo", MatchMode::Only, &["Léa", "Tom"]);
+        let cases = [
+            (set(&["Léa"]), [true, false, false]),
+            (set(&["Léa", "Tom"]), [true, true, true]),
+            (set(&["Léa", "Tom", "Zoé"]), [true, true, false]),
+            (set(&["Zoé"]), [false, false, false]),
+            (set(&[]), [false, false, false]),
+        ];
+        for (present, [a, b, c]) in cases {
+            assert_eq!(any.matches(&present), a, "any {present:?}");
+            assert_eq!(all.matches(&present), b, "all {present:?}");
+            assert_eq!(only.matches(&present), c, "only {present:?}");
+        }
+        assert!(!folder("Vide", MatchMode::Any, &[]).matches(&set(&["Léa"])));
+        assert_eq!(all.describe(), "Léa + Tom (toutes ces personnes ensemble)");
+    }
+
+    #[test]
+    fn folders_for_combines_person_special_and_unknown() {
+        let mut opts = SortOptions::new(PathBuf::from("out"), true);
+        opts.special = vec![folder("Parents", MatchMode::All, &["Léa", "Tom"]), folder("léa", MatchMode::Any, &["Léa"])];
+        let p = photo(Path::new("a.jpg"), &["Léa", "Tom"], false);
+        assert_eq!(folders_for(&p, &opts), vec!["Léa", "Tom", "Parents"], "« léa » fusionne avec « Léa »");
+        opts.per_person = false;
+        assert_eq!(folders_for(&p, &opts), vec!["Parents", "léa"]);
+        let unknown = photo(Path::new("b.jpg"), &[], true);
+        assert_eq!(folders_for(&unknown, &opts), vec![UNKNOWN_DIR]);
+        let only_lea = photo(Path::new("c.jpg"), &["Léa"], false);
+        assert_eq!(folders_for(&only_lea, &opts), vec!["léa"], "sans dossier par personne");
+    }
+
+    #[test]
+    fn plan_with_special_folder_copies_there() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("duo.jpg"), b"duo").unwrap();
+        std::fs::write(src.join("solo.jpg"), b"solo").unwrap();
+        let photos = vec![photo(&src.join("duo.jpg"), &["Léa", "Tom"], false), photo(&src.join("solo.jpg"), &["Léa"], false)];
+        let mut opts = SortOptions::new(d.path().join("out"), false);
+        opts.special = vec![folder("Parents", MatchMode::All, &["Léa", "Tom"])];
+        let p = plan(&photos, std::slice::from_ref(&src), &opts).unwrap();
+        assert_eq!(p.per_person["Parents"].copies, 1);
+        assert_eq!(p.per_person["Léa"].copies, 2);
+        let r = execute(&p, |_, _| {}, &AtomicBool::new(false));
+        assert!(d.path().join("out").join("Parents").join("duo.jpg").is_file());
+        assert!(!d.path().join("out").join("Parents").join("solo.jpg").exists());
+        assert_eq!(r.copied, 4);
+    }
+
     #[test]
     fn candidate_names() {
         assert_eq!(candidate_name(Path::new("IMG_0001.jpg"), 1), OsString::from("IMG_0001.jpg"));
@@ -423,7 +591,7 @@ mod tests {
         let mtime_before = std::fs::metadata(&both).unwrap().modified().unwrap();
         let sha_before = util::sha256_file(&both).unwrap();
         let photos = vec![photo(&both, &["Léa", "Tom"], false), photo(&unk, &[], true)];
-        let opts = SortOptions { dest: d.path().join("out"), include_unknown: true };
+        let opts = SortOptions::new(d.path().join("out"), true);
         let cancel = AtomicBool::new(false);
 
         let p = plan(&photos, std::slice::from_ref(&src), &opts).unwrap();
@@ -453,7 +621,7 @@ mod tests {
         assert_eq!((r2.copied, r2.renamed, r2.already_present), (0, 0, 3));
 
         // Sans _Inconnus
-        let opts3 = SortOptions { dest: d.path().join("out3"), include_unknown: false };
+        let opts3 = SortOptions::new(d.path().join("out3"), false);
         let p3 = plan(&photos, std::slice::from_ref(&src), &opts3).unwrap();
         assert!(p3.copies.iter().all(|c| c.person != UNKNOWN_DIR));
     }
@@ -469,7 +637,7 @@ mod tests {
         let out = d.path().join("out");
         std::fs::create_dir_all(&out).unwrap();
         let photos = vec![photo(&src.join("a.jpg"), &["Ana"], false), photo(&src.join("b.jpg"), &["Léa"], false)];
-        let p = plan(&photos, std::slice::from_ref(&src), &SortOptions { dest: out.clone(), include_unknown: false })
+        let p = plan(&photos, std::slice::from_ref(&src), &SortOptions::new(out.clone(), false))
             .unwrap();
         // Après l'aperçu, un fichier « Léa » empêche la création du dossier Léa\
         std::fs::write(out.join("Léa"), b"bloque").unwrap();
@@ -495,7 +663,7 @@ mod tests {
         std::fs::write(src.join("a/IMG.jpg"), b"one").unwrap();
         std::fs::write(src.join("b/IMG.jpg"), b"two!").unwrap();
         let photos = vec![photo(&src.join("a/IMG.jpg"), &["Léa"], false), photo(&src.join("b/IMG.jpg"), &["Léa"], false)];
-        let p = plan(&photos, std::slice::from_ref(&src), &SortOptions { dest: d.path().join("out"), include_unknown: true }).unwrap();
+        let p = plan(&photos, std::slice::from_ref(&src), &SortOptions::new(d.path().join("out"), true)).unwrap();
         assert_eq!(p.to_write(), 2);
         assert_eq!(p.total_bytes, 7);
         assert!(p.copies[1].target.ends_with("IMG (2).jpg"));

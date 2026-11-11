@@ -39,7 +39,7 @@ pub fn show(app: &mut FaceSortApp, ui: &mut egui::Ui) {
         return;
     }
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    ui.scope(|ui| {
         model_section(app, ui);
         ui.add_space(8.0);
         folders(app, ui);

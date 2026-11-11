@@ -59,18 +59,25 @@ enum Cmd {
     ///
     /// Une photo avec plusieurs personnes est copiée dans le dossier de
     /// chacune. Les photos ne contenant que des visages non nommés vont dans
-    /// _Inconnus\, sauf avec --no-unknown. Un journal CSV est écrit dans la destination.
-    #[command(after_help = "Exemples :\n  facesort-cli sort E:\\Tri --dry-run\n  facesort-cli sort E:\\Tri --no-unknown")]
+    /// _Inconnus\, sauf avec --no-unknown. Les dossiers spéciaux créés dans
+    /// l'onglet Tri (ex. « Parents » = Léa et Tom ensemble) sont remplis aussi.
+    /// Un journal CSV est écrit dans la destination.
+    #[command(
+        after_help = "Exemples :\n  facesort-cli sort E:\\Tri --dry-run\n  facesort-cli sort E:\\Tri --no-unknown\n  facesort-cli sort E:\\Tri --no-person-folders   (dossiers spéciaux seulement)"
+    )]
     Sort {
         /// Dossier de destination (hors des dossiers analysés).
         #[arg(value_name = "DESTINATION")]
         dest: PathBuf,
-        /// Affiche le plan (copies par personne, taille, espace libre) sans rien écrire.
+        /// Affiche le plan (copies par dossier, taille, espace libre) sans rien écrire.
         #[arg(long)]
         dry_run: bool,
         /// Ne copie pas les photos dont aucun visage n'est nommé.
         #[arg(long)]
         no_unknown: bool,
+        /// Ne crée pas de dossier par personne (seulement les dossiers spéciaux et _Inconnus).
+        #[arg(long)]
+        no_person_folders: bool,
         /// Résultat au format JSON sur la sortie standard.
         #[arg(long)]
         json: bool,
@@ -147,11 +154,13 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
             }
             Ok(if report.errors.is_empty() { 0 } else { EXIT_PARTIAL })
         }
-        Cmd::Sort { dest, dry_run, no_unknown, json } => {
+        Cmd::Sort { dest, dry_run, no_unknown, no_person_folders, json } => {
             let store = open_store(&cli.db)?;
             let photos = store.photos_for_sort()?;
             let roots = store.roots()?;
-            let opts = SortOptions { dest, include_unknown: !no_unknown };
+            let mut opts = SortOptions::new(dest, !no_unknown);
+            opts.per_person = !no_person_folders;
+            opts.special = store.special_folders()?;
             let plan = sort::plan(&photos, &roots, &opts)?;
             if store.stats()?.persons == 0 {
                 eprintln!("Aucune personne nommée : ouvrez FaceSort pour nommer les groupes de visages.");

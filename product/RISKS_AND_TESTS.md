@@ -70,6 +70,10 @@
 | AC-F6-1 | Automatique + manuelle | `tests/cli.rs::help` ; relecture en M4 | T4, T12 |
 | AC-F6-2 | Automatique | `tests/cli.rs::exit_codes` ; code 3 : `tests/scan.rs::scan_basic_rescan_truncated_and_ignored` | T4, T8 |
 | AC-F6-3 | Automatique | `tests/cli.rs::status_json` | T4 |
+| AC-F13-1 | Automatique | `sort::tests::plan_with_special_folder_copies_there` ; `tests/cli.rs::sort_uses_special_folders` | T13 |
+| AC-F13-2 | Automatique | `sort::tests::special_folder_modes` | T13 |
+| AC-F13-3 | Automatique | `store::tests::special_folders_crud_rename_and_merge` | T13 |
+| AC-F13-4 | Automatique | `sort::tests::folders_for_combines_person_special_and_unknown` ; `tests/cli.rs::sort_uses_special_folders` | T13 |
 | AC-F6-4 | Automatique | `tests/cli.rs::status_sees_named_person` | T10 |
 
 ## 5. Scénarios de test manuels

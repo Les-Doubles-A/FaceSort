@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS faces(
 CREATE INDEX IF NOT EXISTS faces_photo ON faces(photo_id);
 CREATE INDEX IF NOT EXISTS faces_person ON faces(person_id);
 CREATE INDEX IF NOT EXISTS faces_cluster ON faces(cluster_id);
+CREATE TABLE IF NOT EXISTS special_folders(
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    mode TEXT NOT NULL CHECK(mode IN ('any','all','only')),
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS special_folder_persons(
+    folder_id INTEGER NOT NULL REFERENCES special_folders(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    PRIMARY KEY(folder_id, person_id)
+);
 CREATE TABLE IF NOT EXISTS face_exclusions(
     face_id INTEGER NOT NULL REFERENCES faces(id) ON DELETE CASCADE,
     person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
@@ -678,6 +689,10 @@ impl Store {
             "INSERT OR IGNORE INTO face_exclusions(face_id, person_id) SELECT face_id, ?2 FROM face_exclusions WHERE person_id=?1",
             params![from, into],
         )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO special_folder_persons(folder_id, person_id) SELECT folder_id, ?2 FROM special_folder_persons WHERE person_id=?1",
+            params![from, into],
+        )?;
         tx.execute("UPDATE faces SET person_id=?2 WHERE person_id=?1", params![from, into])?;
         tx.execute("DELETE FROM persons WHERE id=?1", [from])?;
         tx.commit()?;
@@ -734,6 +749,82 @@ impl Store {
     /// Retire un visage d'un groupe non nommé (il redevient isolé jusqu'au prochain regroupement).
     pub fn remove_face_from_group(&mut self, face_id: i64) -> Result<()> {
         self.conn.execute("UPDATE faces SET cluster_id=NULL WHERE id=?1 AND person_id IS NULL", [face_id])?;
+        Ok(())
+    }
+
+    // ---------- dossiers spéciaux ----------
+
+    pub fn special_folders(&self) -> Result<Vec<crate::sort::SpecialFolder>> {
+        use crate::sort::{MatchMode, SpecialFolder};
+        let mut st = self.conn.prepare("SELECT id, name, mode FROM special_folders ORDER BY name COLLATE NOCASE")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        let folders: Vec<_> = rows.collect::<std::result::Result<_, _>>()?;
+        let mut st = self.conn.prepare(
+            "SELECT p.id, p.name FROM special_folder_persons s JOIN persons p ON p.id=s.person_id WHERE s.folder_id=?1",
+        )?;
+        let mut out = Vec::new();
+        for (id, name, mode) in folders {
+            let mut persons = BTreeSet::new();
+            let mut person_ids = BTreeSet::new();
+            for row in st.query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+                let (pid, pname) = row?;
+                person_ids.insert(pid);
+                persons.insert(pname);
+            }
+            out.push(SpecialFolder { id, name, mode: MatchMode::parse(&mode).unwrap_or(MatchMode::Any), persons, person_ids });
+        }
+        Ok(out)
+    }
+
+    /// Crée (`id` = None) ou modifie un dossier spécial. Le résultat intérieur
+    /// est l'identifiant, ou un message lisible si le nom ou la sélection est refusé.
+    pub fn save_special_folder(
+        &mut self,
+        id: Option<i64>,
+        raw_name: &str,
+        mode: crate::sort::MatchMode,
+        person_ids: &[i64],
+    ) -> Result<std::result::Result<i64, String>> {
+        let name = match names::validate_person_name(raw_name) {
+            Ok(n) => n,
+            Err(reason) => return Ok(Err(names::invalid_message(&reason))),
+        };
+        if person_ids.is_empty() {
+            return Ok(Err("Choisissez au moins une personne.".into()));
+        }
+        if let Some((_, existing)) = self.person_by_name(&name)? {
+            return Ok(Err(format!("« {existing} » est déjà le nom d'une personne : choisissez un autre nom de dossier.")));
+        }
+        if let Some(other) = self.special_folders()?.into_iter().find(|f| names::same_name(&f.name, &name) && Some(f.id) != id) {
+            return Ok(Err(format!("Le dossier spécial « {} » existe déjà.", other.name)));
+        }
+        let tx = self.conn.transaction()?;
+        let fid = match id {
+            Some(fid) => {
+                tx.execute("UPDATE special_folders SET name=?2, mode=?3 WHERE id=?1", params![fid, name, mode.as_str()])?;
+                tx.execute("DELETE FROM special_folder_persons WHERE folder_id=?1", [fid])?;
+                fid
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO special_folders(name, mode, created_at) VALUES(?1, ?2, ?3)",
+                    params![name, mode.as_str(), util::now_secs()],
+                )?;
+                tx.last_insert_rowid()
+            }
+        };
+        {
+            let mut st = tx.prepare("INSERT OR IGNORE INTO special_folder_persons(folder_id, person_id) VALUES(?1, ?2)")?;
+            for p in person_ids {
+                st.execute(params![fid, p])?;
+            }
+        }
+        tx.commit()?;
+        Ok(Ok(fid))
+    }
+
+    pub fn delete_special_folder(&mut self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM special_folders WHERE id=?1", [id])?;
         Ok(())
     }
 
@@ -982,6 +1073,40 @@ pub(crate) mod tests {
         assert_eq!(ex.len(), 1);
         assert_eq!((ex[0].face.id, ex[0].person.as_str()), (f[1], "Léa"));
         assert_eq!(s.faces_missing_quality().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn special_folders_crud_rename_and_merge() {
+        use crate::sort::MatchMode;
+        let (_d, mut s) = mem_store();
+        let lea = s.create_person("Léa").unwrap();
+        let tom = s.create_person("Tom").unwrap();
+        let zoe = s.create_person("Zoé").unwrap();
+        let id = s.save_special_folder(None, " Parents ", MatchMode::All, &[lea, tom]).unwrap().unwrap();
+        let f = &s.special_folders().unwrap()[0];
+        assert_eq!((f.name.as_str(), f.mode), ("Parents", MatchMode::All));
+        assert_eq!(f.persons, ["Léa", "Tom"].iter().map(|x| x.to_string()).collect());
+
+        // Refus : nom invalide, nom de personne, doublon, sélection vide
+        assert!(s.save_special_folder(None, "CON", MatchMode::Any, &[lea]).unwrap().is_err());
+        assert!(s.save_special_folder(None, "léa", MatchMode::Any, &[lea]).unwrap().is_err());
+        assert!(s.save_special_folder(None, "parents", MatchMode::Any, &[lea]).unwrap().is_err());
+        assert!(s.save_special_folder(None, "Vide", MatchMode::Any, &[]).unwrap().is_err());
+
+        // Modification : même nom autorisé pour le même dossier
+        s.save_special_folder(Some(id), "Parents", MatchMode::Any, &[lea, zoe]).unwrap().unwrap();
+        assert_eq!(s.special_folders().unwrap()[0].persons.len(), 2);
+
+        // Renommage d'une personne : le dossier suit
+        s.rename_person(lea, "Léana").unwrap();
+        assert!(s.special_folders().unwrap()[0].persons.contains("Léana"));
+        // Fusion : la personne absorbée est remplacée
+        s.merge_persons(zoe, tom).unwrap();
+        let f = &s.special_folders().unwrap()[0];
+        assert!(f.person_ids.contains(&tom) && !f.person_ids.contains(&zoe));
+
+        s.delete_special_folder(id).unwrap();
+        assert!(s.special_folders().unwrap().is_empty());
     }
 
     #[test]
