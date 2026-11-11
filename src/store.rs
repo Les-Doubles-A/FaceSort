@@ -119,6 +119,13 @@ pub struct StoredFace {
     pub det_score: f32,
 }
 
+/// Visage enregistré et le prénom qui lui est associé.
+#[derive(Clone, Debug)]
+pub struct LabelledFace {
+    pub face: StoredFace,
+    pub person: String,
+}
+
 /// Empreinte d'un visage et sa note de qualité.
 #[derive(Clone, Debug)]
 pub struct FaceEmb {
@@ -373,22 +380,52 @@ impl Store {
 
     /// Visages sans note de qualité (analysés avant le schéma 2).
     pub fn faces_missing_quality(&self) -> Result<Vec<StoredFace>> {
-        let mut st = self.conn.prepare(
-            "SELECT f.id, p.path, f.landmarks, MIN(f.w, f.h), f.score FROM faces f JOIN photos p ON p.id=f.photo_id
-             WHERE f.quality IS NULL ORDER BY p.path",
-        )?;
+        Ok(self
+            .stored_faces("WHERE f.quality IS NULL ORDER BY p.path", "NULL")?
+            .into_iter()
+            .map(|l| l.face)
+            .collect())
+    }
+
+    /// Visages que l'utilisateur a nommés (attribution manuelle) : ses
+    /// étiquettes, utilisables pour mesurer la qualité de la reconnaissance.
+    pub fn confirmed_faces(&self) -> Result<Vec<LabelledFace>> {
+        self.stored_faces(
+            "JOIN persons pe ON pe.id=f.person_id WHERE f.assignment='manual' ORDER BY pe.name, f.id",
+            "pe.name",
+        )
+    }
+
+    /// Visages que l'utilisateur a retirés d'une personne (« ce n'est pas
+    /// elle ») : `person` est la personne à laquelle ils NE correspondent pas.
+    pub fn excluded_faces(&self) -> Result<Vec<LabelledFace>> {
+        self.stored_faces(
+            "JOIN face_exclusions e ON e.face_id=f.id JOIN persons pe ON pe.id=e.person_id ORDER BY pe.name, f.id",
+            "pe.name",
+        )
+    }
+
+    fn stored_faces(&self, tail: &str, person_col: &str) -> Result<Vec<LabelledFace>> {
+        let sql = format!(
+            "SELECT f.id, p.path, f.landmarks, MIN(f.w, f.h), f.score, {person_col}
+             FROM faces f JOIN photos p ON p.id=f.photo_id {tail}"
+        );
+        let mut st = self.conn.prepare(&sql)?;
         let rows = st.query_map([], |r| {
             let lm = embed::from_blob(&r.get::<_, Vec<u8>>(2)?);
             let mut pts = [[0f32; 2]; 5];
             for (k, p) in pts.iter_mut().enumerate() {
                 *p = [lm.get(2 * k).copied().unwrap_or(0.0), lm.get(2 * k + 1).copied().unwrap_or(0.0)];
             }
-            Ok(StoredFace {
-                id: r.get(0)?,
-                photo: PathBuf::from(r.get::<_, String>(1)?),
-                landmarks: pts,
-                size: r.get(3)?,
-                det_score: r.get(4)?,
+            Ok(LabelledFace {
+                face: StoredFace {
+                    id: r.get(0)?,
+                    photo: PathBuf::from(r.get::<_, String>(1)?),
+                    landmarks: pts,
+                    size: r.get(3)?,
+                    det_score: r.get(4)?,
+                },
+                person: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -896,6 +933,23 @@ pub(crate) mod tests {
         assert_eq!(s.stats().unwrap().faces, 1, "données conservées");
         assert_eq!(s.faces_missing_quality().unwrap().len(), 1);
         assert_eq!(s.unassigned_embeddings().unwrap()[0].quality, None);
+    }
+
+    #[test]
+    fn confirmed_and_excluded_faces_are_listed() {
+        let (_d, mut s) = mem_store();
+        let f = add_photo(&mut s, "a.jpg", 3);
+        let lea = s.create_person("Léa").unwrap();
+        s.assign_faces(&f[..2], lea, Assignment::Manual).unwrap();
+        s.assign_faces(&f[2..], lea, Assignment::Auto).unwrap();
+        s.remove_face_from_person(f[1]).unwrap();
+        let conf = s.confirmed_faces().unwrap();
+        assert_eq!(conf.len(), 1);
+        assert_eq!((conf[0].face.id, conf[0].person.as_str()), (f[0], "Léa"));
+        let ex = s.excluded_faces().unwrap();
+        assert_eq!(ex.len(), 1);
+        assert_eq!((ex[0].face.id, ex[0].person.as_str()), (f[1], "Léa"));
+        assert_eq!(s.faces_missing_quality().unwrap().len(), 0);
     }
 
     #[test]
