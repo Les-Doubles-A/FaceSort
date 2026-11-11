@@ -12,7 +12,7 @@ pub fn engine() -> Option<Engine> {
         eprintln!("modèles absents : test ignoré (lancer scripts/fetch-models.ps1)");
         return None;
     }
-    Some(Engine::load(None).expect("chargement des modèles"))
+    Some(Engine::load_with(None, facesort::embed::EmbedderKind::SFace).expect("chargement des modèles"))
 }
 
 /// Copie un dossier de fixtures dans un dossier temporaire (les tests ne touchent pas aux originaux).

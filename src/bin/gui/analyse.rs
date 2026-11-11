@@ -40,6 +40,8 @@ pub fn show(app: &mut FaceSortApp, ui: &mut egui::Ui) {
     }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
+        model_section(app, ui);
+        ui.add_space(8.0);
         folders(app, ui);
         ui.add_space(12.0);
         match app.last.clone() {
@@ -53,6 +55,43 @@ pub fn show(app: &mut FaceSortApp, ui: &mut egui::Ui) {
             None => {}
         }
     });
+}
+
+/// Modèle de reconnaissance de la base, et passage à l'autre modèle.
+fn model_section(app: &mut FaceSortApp, ui: &mut egui::Ui) {
+    use facesort::embed::EmbedderKind;
+    let Some(current) = app.model else { return };
+    let other = match current {
+        EmbedderKind::SFace => EmbedderKind::AuraFace,
+        EmbedderKind::AuraFace => EmbedderKind::SFace,
+    };
+    ui.horizontal(|ui| {
+        ui.label(format!("Modèle de reconnaissance : {}", current.label()));
+        if facesort::models::is_installed(other, None) {
+            let (label, hint) = match other {
+                EmbedderKind::AuraFace => (
+                    "Passer à AuraFace (moins de confusions)",
+                    "Recalcule les empreintes avec AuraFace, plus fiable sur les visages ressemblants et les photos mal éclairées, mais plus lent. Vos noms, retraits et groupes ignorés sont conservés.",
+                ),
+                EmbedderKind::SFace => (
+                    "Revenir à SFace (plus rapide)",
+                    "Recalcule les empreintes avec SFace, plus rapide mais qui confond davantage. Vos noms sont conservés.",
+                ),
+            };
+            if ui.button(label).on_hover_text(hint).clicked() {
+                app.start_convert(ui.ctx(), other);
+            }
+        }
+    });
+    match &app.notice {
+        Some(Ok(m)) => {
+            ui.label(m);
+        }
+        Some(Err(e)) => {
+            ui.colored_label(ERROR_COLOR, format!("Conversion impossible : {e}"));
+        }
+        None => {}
+    }
 }
 
 fn folders(app: &mut FaceSortApp, ui: &mut egui::Ui) {
@@ -98,7 +137,8 @@ fn folders(app: &mut FaceSortApp, ui: &mut egui::Ui) {
 fn running(app: &mut FaceSortApp, ui: &mut egui::Ui) {
     let Some(job) = &app.job else { return };
     let p = &job.progress;
-    ui.label(RichText::new("Analyse en cours").strong());
+    let title = if job.converting { "Conversion de la base en cours" } else { "Analyse en cours" };
+    ui.label(RichText::new(title).strong());
     ui.add(egui::ProgressBar::new(p.fraction()).show_percentage().animate(true));
     ui.label(p.label());
     let eta = p.eta(job.started.elapsed()).map(human_duration).unwrap_or_else(|| "calcul…".into());

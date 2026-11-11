@@ -6,16 +6,31 @@ use std::path::{Path, PathBuf};
 
 pub const DETECTOR_FILE: &str = "face_detection_yunet_2026may.onnx";
 pub const SUMS_FILE: &str = "SHA256SUMS";
-/// Modèle de reconnaissance par défaut (voir README, « Choix du modèle »).
-pub const DEFAULT_EMBEDDER: EmbedderKind = EmbedderKind::SFace;
+/// Modèle de reconnaissance par défaut pour une nouvelle base : AuraFace
+/// confond moins les personnes (mesures du 2026-11-11, README « Choix du
+/// modèle ») ; SFace sert de repli s'il n'est pas installé.
+pub const DEFAULT_EMBEDDER: EmbedderKind = EmbedderKind::AuraFace;
 
-/// Modèle choisi : variable `FACESORT_EMBEDDER` (`sface` ou `auraface`), sinon le défaut.
-pub fn selected_embedder() -> Result<EmbedderKind> {
-    match std::env::var("FACESORT_EMBEDDER") {
-        Ok(v) if !v.trim().is_empty() => EmbedderKind::parse(&v)
-            .ok_or_else(|| Error::Invalid(format!("FACESORT_EMBEDDER={v} inconnu (attendu : sface ou auraface)"))),
-        _ => Ok(DEFAULT_EMBEDDER),
+/// Choix du modèle, par ordre de priorité : variable `FACESORT_EMBEDDER`
+/// (`sface` ou `auraface`), modèle qui a rempli la base (`from_store`), défaut
+/// s'il est installé, sinon SFace.
+pub fn choose_embedder(from_store: Option<EmbedderKind>, models_dir: Option<&Path>) -> Result<EmbedderKind> {
+    if let Ok(v) = std::env::var("FACESORT_EMBEDDER")
+        && !v.trim().is_empty()
+    {
+        return EmbedderKind::parse(&v)
+            .ok_or_else(|| Error::Invalid(format!("FACESORT_EMBEDDER={v} inconnu (attendu : sface ou auraface)")));
     }
+    if let Some(k) = from_store {
+        return Ok(k);
+    }
+    Ok(if is_installed(DEFAULT_EMBEDDER, models_dir) { DEFAULT_EMBEDDER } else { EmbedderKind::SFace })
+}
+
+/// Le fichier du modèle est-il présent ?
+pub fn is_installed(kind: EmbedderKind, models_dir: Option<&Path>) -> bool {
+    let dir = models_dir.map(Path::to_path_buf).or_else(find_models_dir);
+    dir.is_some_and(|d| d.join(kind.file()).is_file())
 }
 
 /// Identité des modèles utilisés, enregistrée dans la base : des empreintes

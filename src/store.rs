@@ -214,7 +214,9 @@ impl Store {
     pub fn check_models(&self, ids: &ModelIds) -> Result<()> {
         match self.meta("embedder_model")? {
             Some(m) if m != ids.embedder && self.count("SELECT COUNT(*) FROM faces")? > 0 => Err(Error::Invalid(
-                format!("la base a été remplie avec un autre modèle ({m}) ; supprimez-la pour tout réanalyser"),
+                format!(
+                    "la base a été remplie avec un autre modèle ({m}) ; convertissez-la (bouton « Passer à … » de l'onglet Analyse, ou « facesort-cli convert ») sans perdre vos noms"
+                ),
             )),
             _ => {
                 self.set_meta("embedder_model", &ids.embedder)?;
@@ -385,6 +387,36 @@ impl Store {
             .into_iter()
             .map(|l| l.face)
             .collect())
+    }
+
+    /// Tous les visages, groupés par photo (conversion vers un autre modèle).
+    pub fn all_stored_faces(&self) -> Result<Vec<StoredFace>> {
+        Ok(self.stored_faces("ORDER BY p.path, f.id", "NULL")?.into_iter().map(|l| l.face).collect())
+    }
+
+    /// Remplace les empreintes (et notes) après un changement de modèle, puis
+    /// enregistre le nouveau modèle. Les visages dont la photo est illisible
+    /// sont ignorés (empreinte nulle) : leur nom est conservé.
+    pub fn replace_embeddings(&mut self, ids: &ModelIds, values: &[(i64, Vec<f32>, f32)], unreadable: &[i64]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut st = tx.prepare("UPDATE faces SET embedding=?2, quality=?3 WHERE id=?1")?;
+            for (f, e, q) in values {
+                st.execute(params![f, embed::to_blob(e), q])?;
+            }
+            let mut st = tx.prepare("UPDATE faces SET embedding=x'', ignored=1, cluster_id=NULL WHERE id=?1")?;
+            for f in unreadable {
+                st.execute([f])?;
+            }
+            tx.execute(
+                "UPDATE faces SET person_id=NULL, assignment='none', cluster_id=NULL WHERE assignment='auto'",
+                [],
+            )?;
+            tx.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('embedder_model', ?1)", [&ids.embedder])?;
+            tx.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('detector_model', ?1)", [&ids.detector])?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Visages que l'utilisateur a nommés (attribution manuelle) : ses

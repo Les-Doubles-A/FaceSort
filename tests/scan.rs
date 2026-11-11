@@ -163,3 +163,64 @@ fn full_journey_people3() {
     assert_eq!(barack_dir.len(), 9);
     assert!(barack_dir.iter().all(|n| n.to_string_lossy().starts_with("obama")));
 }
+
+/// Conversion SFace -> AuraFace : noms, retraits et reconnaissance conservés.
+#[test]
+fn convert_sface_base_to_auraface_keeps_names() {
+    use facesort::embed::EmbedderKind;
+    use facesort::engine::Engine;
+    if !facesort::models::is_installed(EmbedderKind::AuraFace, None) || facesort::models::find_models_dir().is_none() {
+        eprintln!("AuraFace absent : test ignoré");
+        return;
+    }
+    let mut sface = Engine::load_with(None, EmbedderKind::SFace).unwrap();
+    let d = tempfile::tempdir().unwrap();
+    let a = d.path().join("a");
+    let b = d.path().join("b");
+    common::copy_dir(&common::fixtures().join("people3"), &a);
+    common::copy_dir(&common::fixtures().join("people3_new"), &b);
+    let mut s = Store::open(&d.path().join("t.db")).unwrap();
+    let cancel = AtomicBool::new(false);
+    scan::scan(&mut s, &mut sface, std::slice::from_ref(&a), None, |_| {}, &cancel).unwrap();
+    for g in s.groups().unwrap() {
+        let name = match group_truth(&s, &g.face_ids)[0].as_str() {
+            "obama" => "Barack",
+            "biden" => "Joe",
+            _ => "Kamala",
+        };
+        if let NameOutcome::Exists { id, .. } = s.name_group(g.cluster_id, name).unwrap() {
+            s.add_group_to_person(g.cluster_id, id).unwrap();
+        }
+    }
+    let joe = s.person_by_name("Joe").unwrap().unwrap().0;
+    let removed = s.person_faces(joe).unwrap()[0];
+    s.remove_face_from_person(removed).unwrap();
+    let before: Vec<_> = s.persons().unwrap().into_iter().map(|p| (p.name, p.faces)).collect();
+    assert_eq!(s.embedder_kind().unwrap(), Some(EmbedderKind::SFace));
+
+    // Une analyse avec l'autre modèle est refusée avec un message qui indique la conversion
+    let mut aura = Engine::load_with(None, EmbedderKind::AuraFace).unwrap();
+    let err = scan::scan(&mut s, &mut aura, std::slice::from_ref(&a), None, |_| {}, &cancel).unwrap_err().to_string();
+    assert!(err.contains("convert"), "{err}");
+
+    let rep = scan::convert_embeddings(&mut s, &mut aura, |_| {}, &cancel).unwrap();
+    assert_eq!(rep.converted, 18);
+    assert_eq!(rep.unreadable, 0);
+    assert_eq!(s.embedder_kind().unwrap(), Some(EmbedderKind::AuraFace));
+    let after: Vec<_> = s.persons().unwrap().into_iter().map(|p| (p.name, p.faces)).collect();
+    assert_eq!(before, after, "noms et visages nommés conservés");
+    assert!(s.exclusions().unwrap()[&removed].contains(&joe), "retrait conservé");
+    assert!(!s.person_faces(joe).unwrap().contains(&removed));
+
+    // La reconnaissance fonctionne avec le nouveau modèle
+    let r = scan::scan(&mut s, &mut aura, std::slice::from_ref(&b), None, |_| {}, &cancel).unwrap();
+    assert_eq!(r.faces_found, 4);
+    let barack = s.person_by_name("Barack").unwrap().unwrap().0;
+    let new_barack = s
+        .person_faces(barack)
+        .unwrap()
+        .into_iter()
+        .filter(|f| s.face_info(*f).unwrap().unwrap().photo_path.starts_with(scan::absolute(&b)))
+        .count();
+    assert_eq!(new_barack, 3);
+}

@@ -6,7 +6,7 @@
 
 | ID | Décision | Options | Recommandation | Bloque |
 |---|---|---|---|---|
-| D1 | Modèle de détection et de reconnaissance | YuNet + SFace (MIT, Apache 2.0) ; YuNet + AuraFace-v1 (Apache 2.0, 261 Mo, plus lent) ; RetinaFace/ArcFace InsightFace (non commercial) | Tranché le 2026-11-11 : YuNet + SFace par défaut, AuraFace disponible (`FACESORT_EMBEDDER=auraface`). Sur le banc « femmes + photos dégradées », AuraFace confond moins (pire paire de personnes différentes 0,33 contre 0,40). Choix définitif après `eval` sur les photos de l'utilisateur (T11) | T2, T11 |
+| D1 | Modèle de détection et de reconnaissance | YuNet + SFace ; YuNet + AuraFace-v1 (Apache 2.0) ; RetinaFace/ArcFace InsightFace (non commercial) | Tranché le 2026-11-11 : YuNet + AuraFace par défaut pour une nouvelle base (moins de confusions, mesure ci-dessous), SFace en repli et pour les bases existantes, conversion sans perte des noms (GUI et `facesort-cli convert`) | T2, T11 |
 | D2 | Photos de test | Images libres de droits versionnées ; photos personnelles non versionnées (`fixtures-private/`) ; les deux | Les deux : quelques images libres pour la CI si un jeu adapté existe, photos personnelles pour l'évaluation T11 | T2, T4, T11 |
 | D3 | Variante YuNet | `2023mar` (entrée fixe) ; `2026may` (entrée dynamique) | Essai court en T2 : garder celle qui s'exécute avec `ort` et donne les cadres attendus sur `fixtures/basic` | T2 |
 
@@ -173,7 +173,7 @@
 - **Tests** : scénario M4 et relecture de `--help`.
 - **Terminé quand** : M4 réussi sur la machine de l'utilisateur.
 - **Couvre** : F5, F6, AC-F5-5, AC-F6-1
-- **Statut** : à faire
+- **Statut** : fait (2026-11-11) : `scripts/package.ps1` construit `dist/FaceSort-<version>-portable/` (exécutables, `DirectML.dll`, runtime Visual C++ en local, modèles, licences), le zip et l'installeur Inno Setup (`installer/FaceSort.iss`) ; contrôle de démarrage de la CLI depuis le dossier portable ; icône `FaceSort.ico` intégrée aux exécutables et à la fenêtre ; README et `THIRD_PARTY_NOTICES.md` ; publié sur https://github.com/Les-Doubles-A/FaceSort. Reste à vérifier à la main : M4 (installation sur un PC sans Visual Studio, disque plein)
 
 ## 5. Peut attendre
 

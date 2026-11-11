@@ -75,6 +75,17 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Convertit la base vers un autre modèle de reconnaissance, sans perdre les noms.
+    ///
+    /// Les empreintes sont recalculées à partir des photos et des repères
+    /// enregistrés. AuraFace confond moins les personnes que SFace, mais
+    /// analyse plus lentement.
+    #[command(after_help = "Exemple :\n  facesort-cli convert --model auraface")]
+    Convert {
+        /// Modèle cible : auraface ou sface.
+        #[arg(long, value_name = "MODELE")]
+        model: String,
+    },
     /// Affiche le contenu de la base : photos, visages, personnes.
     #[command(after_help = "Exemple :\n  facesort-cli status --json")]
     Status {
@@ -107,7 +118,7 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
                 anyhow::bail!("dossier introuvable : {}", missing.display());
             }
             let mut store = open_store(&cli.db)?;
-            let mut engine = Engine::load(cli.models.as_deref())?;
+            let mut engine = Engine::load_for_store(cli.models.as_deref(), &store)?;
             let show = !quiet && std::io::stderr().is_terminal();
             let cancel = AtomicBool::new(false);
             let report = scan::scan(
@@ -178,6 +189,41 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
             }
             Ok(if report.stopped_on_error.is_some() || report.missing_sources > 0 { EXIT_PARTIAL } else { 0 })
         }
+        Cmd::Convert { model } => {
+            let kind = facesort::embed::EmbedderKind::parse(&model)
+                .ok_or_else(|| anyhow::anyhow!("modèle inconnu : {model} (auraface ou sface)"))?;
+            let mut store = open_store(&cli.db)?;
+            if store.embedder_kind()? == Some(kind) {
+                println!("La base utilise déjà {}.", kind.label());
+                return Ok(0);
+            }
+            let mut engine = Engine::load_with(cli.models.as_deref(), kind)?;
+            let show = std::io::stderr().is_terminal();
+            let cancel = AtomicBool::new(false);
+            let rep = scan::convert_embeddings(
+                &mut store,
+                &mut engine,
+                |p| {
+                    if show {
+                        eprint!("\r{}/{} photos, {} visages   ", p.done, p.total, p.faces);
+                        let _ = std::io::stderr().flush();
+                    }
+                },
+                &cancel,
+            )?;
+            if show {
+                eprintln!();
+            }
+            println!(
+                "Base convertie vers {} : {} visages, {} photo(s) introuvable(s) (visages ignorés, noms conservés), {} attribué(s) automatiquement, {} groupe(s) à nommer",
+                kind.label(),
+                rep.converted,
+                rep.unreadable,
+                rep.auto_assigned,
+                rep.groups
+            );
+            Ok(if rep.unreadable > 0 { EXIT_PARTIAL } else { 0 })
+        }
         Cmd::Status { json } => {
             let store = open_store(&cli.db)?;
             let stats = store.stats()?;
@@ -191,6 +237,7 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
                     "persons": stats.persons,
                     "unassigned_faces": stats.unassigned_faces,
                     "groups": stats.groups,
+                    "model": store.embedder_kind()?.map(|k| k.label()),
                     "people": people,
                 });
                 println!("{}", serde_json::to_string_pretty(&v)?);
@@ -198,6 +245,9 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
                 println!("Base vide ({}). Lancez « facesort-cli scan <dossier> ».", store.path().display());
             } else {
                 println!("Base : {}", store.path().display());
+                if let Some(k) = store.embedder_kind()? {
+                    println!("Modèle de reconnaissance : {}", k.label());
+                }
                 println!(
                     "{} photos ({} en erreur), {} visages, {} personnes, {} visages non attribués en {} groupes",
                     stats.photos, stats.photos_with_errors, stats.faces, stats.persons, stats.unassigned_faces, stats.groups

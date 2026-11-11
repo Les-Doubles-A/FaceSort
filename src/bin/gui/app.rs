@@ -2,7 +2,8 @@
 
 use eframe::egui::{self, RichText};
 use facesort::engine::Engine;
-use facesort::scan::{self, Progress, ScanReport};
+use facesort::embed::EmbedderKind;
+use facesort::scan::{self, ConvertReport, Progress, ScanReport};
 use facesort::store::{self, Stats, Store};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,9 +22,12 @@ pub enum Tab {
 pub enum Msg {
     Progress(Progress),
     Done(Result<ScanReport, String>),
+    Converted(Result<ConvertReport, String>),
 }
 
 pub struct ScanJob {
+    /// Conversion de modèle (sinon : analyse).
+    pub converting: bool,
     pub rx: Receiver<Msg>,
     pub cancel: Arc<AtomicBool>,
     pub progress: Progress,
@@ -52,6 +56,10 @@ pub struct FaceSortApp {
     pub job: Option<ScanJob>,
     /// Résultat de la dernière analyse de cette session.
     pub last: Option<Result<ScanReport, String>>,
+    /// Modèle qui a rempli la base (None : base vide).
+    pub model: Option<EmbedderKind>,
+    /// Message après une conversion de modèle.
+    pub notice: Option<Result<String, String>>,
     pub people: crate::people::PeopleState,
     pub tri: crate::tri::TriState,
     /// Vignettes chargées (None : vignette absente ou illisible).
@@ -73,6 +81,8 @@ impl FaceSortApp {
             roots: Vec::new(),
             job: None,
             last: None,
+            model: None,
+            notice: None,
             people: Default::default(),
             tri: Default::default(),
             thumbs: HashMap::new(),
@@ -131,6 +141,7 @@ impl FaceSortApp {
                 (Ok(st), Ok(r)) => {
                     self.stats = st;
                     self.known_roots = r;
+                    self.model = s.embedder_kind().ok().flatten();
                 }
                 (Err(e), _) | (_, Err(e)) => self.store_error = Some(format!("Lecture de la base impossible : {e}")),
             }
@@ -156,7 +167,7 @@ impl FaceSortApp {
         std::thread::spawn(move || {
             let result = (|| -> Result<ScanReport, String> {
                 let mut store = Store::open(&db).map_err(|e| format!("base illisible : {e}"))?;
-                let mut engine = Engine::load(None).map_err(|e| e.to_string())?;
+                let mut engine = Engine::load_for_store(None, &store).map_err(|e| e.to_string())?;
                 let ptx = tx.clone();
                 let pctx = ctx.clone();
                 scan::scan(
@@ -175,19 +186,73 @@ impl FaceSortApp {
             let _ = tx.send(Msg::Done(result));
             ctx.request_repaint();
         });
-        self.job = Some(ScanJob { rx, cancel, progress: Progress::default(), started: Instant::now() });
+        self.job = Some(ScanJob { converting: false, rx, cancel, progress: Progress::default(), started: Instant::now() });
         self.last = None;
+    }
+
+    /// Convertit la base vers un autre modèle, en arrière-plan, sans perdre les noms.
+    pub fn start_convert(&mut self, ctx: &egui::Context, kind: EmbedderKind) {
+        if self.job.is_some() {
+            return;
+        }
+        let (tx, rx) = channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let db = self.db_path.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<ConvertReport, String> {
+                let mut store = Store::open(&db).map_err(|e| format!("base illisible : {e}"))?;
+                let mut engine = Engine::load_with(None, kind).map_err(|e| e.to_string())?;
+                let ptx = tx.clone();
+                let pctx = ctx.clone();
+                scan::convert_embeddings(
+                    &mut store,
+                    &mut engine,
+                    move |p| {
+                        let _ = ptx.send(Msg::Progress(p.clone()));
+                        pctx.request_repaint();
+                    },
+                    &flag,
+                )
+                .map_err(|e| e.to_string())
+            })();
+            let _ = tx.send(Msg::Converted(result));
+            ctx.request_repaint();
+        });
+        self.job = Some(ScanJob { converting: true, rx, cancel, progress: Progress::default(), started: Instant::now() });
+        self.notice = None;
     }
 
     fn poll_job(&mut self) {
         let mut finished = None;
+        let mut converted = None;
         if let Some(job) = &mut self.job {
             while let Ok(msg) = job.rx.try_recv() {
                 match msg {
                     Msg::Progress(p) => job.progress = p,
                     Msg::Done(r) => finished = Some(r),
+                    Msg::Converted(r) => converted = Some(r),
                 }
             }
+        }
+        if let Some(r) = converted {
+            self.job = None;
+            self.notice = Some(r.map(|c| {
+                let lost = if c.unreadable > 0 {
+                    format!(" ; {} visage(s) ignoré(s) (photo introuvable, noms conservés)", c.unreadable)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "Base convertie : {} visages recalculés, {} attribué(s) automatiquement, {} groupe(s) à nommer{lost}",
+                    c.converted, c.auto_assigned, c.groups
+                )
+            }));
+            self.reload();
+            self.people.dirty = true;
+            self.forget_qualities();
+            self.tri.invalidate();
         }
         if let Some(r) = finished {
             self.job = None;

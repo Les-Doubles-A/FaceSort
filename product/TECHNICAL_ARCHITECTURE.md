@@ -9,12 +9,12 @@
 | Interface | `eframe`/`egui` 0.37 (GUI) + `clap` (CLI) | Conventions de tes projets (FontLicenseClassifier, NetPulse) ; GUI immédiate suffisante pour une grille de vignettes | Tauri (HTML/JS en plus, sans bénéfice ici) |
 | Inférence | `ort` 2.0.0-rc.15 (ONNX Runtime), CPU | Seule voie Rust mature pour exécuter des modèles ONNX ; DirectML disponible plus tard par feature | `tract` (pur Rust, compatibilité opérateurs YuNet/SFace non vérifiée) ; OpenCV via `opencv` crate (dépendance C++ lourde à compiler sous Windows) |
 | Détection | YuNet (OpenCV Zoo, MIT) | Licence permissive, petit modèle, fournit les 5 points de repère nécessaires à l'alignement | RetinaFace InsightFace : « non-commercial research purposes only » (D1, F10) |
-| Reconnaissance | SFace (OpenCV Zoo, Apache 2.0) par défaut ; AuraFace-v1 (fal.ai, Apache 2.0, ResNet100, 512 valeurs) au choix via `FACESORT_EMBEDDER` | Licences permissives ; AuraFace confond moins sur photos dégradées mais 261 Mo et plus lent | ArcFace InsightFace : licence non commerciale |
+| Reconnaissance | AuraFace-v1 (fal.ai, Apache 2.0, ResNet100, 512 valeurs) par défaut pour une nouvelle base ; SFace (OpenCV Zoo, Apache 2.0) en repli ; `FACESORT_EMBEDDER` force le choix ; conversion sans perte des noms | AuraFace confond moins sur photos dégradées (mesuré), SFace plus rapide | ArcFace InsightFace : licence non commerciale |
 | Logique | Bibliothèque `facesort` (regroupement, reconnaissance, tri, validation des noms) | Testable sans GUI ni modèle (empreintes synthétiques) | Logique dans la GUI |
 | Stockage | SQLite via `rusqlite` 0.42 `bundled`, `%LOCALAPPDATA%\FaceSort\facesort.db` | Base embarquée, une source de vérité partagée GUI/CLI, déjà utilisée dans tes projets | Fichiers JSON (pas de requêtes, écritures non atomiques) |
 | Serveur / services | Sans objet : tout est local | Aucune donnée partagée, aucune clé, aucun traitement en absence de l'utilisateur | - |
 | Tests | `cargo test` : unitaires + intégration sur fixtures | Une commande | - |
-| Distribution | Dossier portable : `FaceSort.exe`, `facesort-cli.exe`, ONNX Runtime lié statiquement (+ `DirectML.dll` à vérifier), `models/` | Usage personnel ; pas d'installeur nécessaire | Installeur MSI (V2 si diffusion) |
+| Distribution | Installeur Inno Setup (utilisateur courant) et zip portable : `FaceSort.exe`, `facesort-cli.exe`, `DirectML.dll`, runtime Visual C++ en déploiement local, `models/` ; publiés en Release GitHub | Les exécutables importent `directml.dll` et le runtime Visual C++ (vérifié avec dumpbin) ; convention des autres projets (NetPulse) | MSI, installation du runtime par vc_redist (plus lourd) |
 
 ## 2. Contexte existant
 

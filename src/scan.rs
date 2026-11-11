@@ -323,6 +323,68 @@ pub fn backfill_quality(store: &mut Store) -> Result<usize> {
     Ok(values.len())
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ConvertReport {
+    pub converted: usize,
+    /// Visages dont la photo est introuvable ou illisible : ignorés, noms conservés.
+    pub unreadable: usize,
+    pub auto_assigned: usize,
+    pub groups: usize,
+}
+
+/// Convertit toute la base vers le modèle de reconnaissance du moteur : les
+/// empreintes sont recalculées à partir des photos et des repères enregistrés
+/// (pas de nouvelle détection), donc les noms donnés, retraits et visages
+/// ignorés sont conservés. Rien n'est écrit si la conversion est annulée.
+pub fn convert_embeddings(
+    store: &mut Store,
+    engine: &mut Engine,
+    mut progress: impl FnMut(&Progress),
+    cancel: &AtomicBool,
+) -> Result<ConvertReport> {
+    let faces = store.all_stored_faces()?;
+    let mut by_photo: BTreeMap<PathBuf, Vec<crate::store::StoredFace>> = BTreeMap::new();
+    for f in faces {
+        by_photo.entry(f.photo.clone()).or_default().push(f);
+    }
+    let photos: Vec<_> = by_photo.into_iter().collect();
+    let mut prog = Progress { total: photos.len(), ..Default::default() };
+    progress(&prog);
+    let mut values = Vec::new();
+    let mut unreadable = Vec::new();
+    for batch in photos.chunks(BATCH) {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(crate::Error::Invalid("conversion annulée : la base n'a pas été modifiée".into()));
+        }
+        let decoded: Vec<Option<image::RgbImage>> = batch
+            .par_iter()
+            .map(|(path, _)| std::fs::read(path).ok().and_then(|b| imageio::decode_oriented(&b).ok()))
+            .collect();
+        for ((path, fs), img) in batch.iter().zip(decoded) {
+            prog.current = Some(path.clone());
+            match img {
+                Some(img) => {
+                    for f in fs {
+                        let aligned = crate::align::align_face(&img, &f.landmarks);
+                        let q = crate::quality::FaceQuality::measure(&aligned, f.size, f.det_score).score();
+                        values.push((f.id, engine.embedder.embed(&aligned)?, q));
+                        prog.faces += 1;
+                    }
+                }
+                None => {
+                    unreadable.extend(fs.iter().map(|f| f.id));
+                    prog.errors += 1;
+                }
+            }
+            prog.done += 1;
+            progress(&prog);
+        }
+    }
+    store.replace_embeddings(&engine.ids, &values, &unreadable)?;
+    let (auto_assigned, groups) = refresh_groups(store, Some(ScanOptions::for_kind(engine.kind)))?;
+    Ok(ConvertReport { converted: values.len(), unreadable: unreadable.len(), auto_assigned, groups })
+}
+
 /// Relance reconnaissance puis regroupement (après un nommage dans la GUI).
 /// Sans options : seuils du modèle qui a rempli la base.
 pub fn refresh_groups(store: &mut Store, opts: Option<ScanOptions>) -> Result<(usize, usize)> {

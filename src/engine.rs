@@ -39,9 +39,14 @@ pub struct Engine {
 
 impl Engine {
     /// Charge les modèles du dossier donné (ou du premier dossier `models/`
-    /// trouvé) avec le modèle de reconnaissance choisi (`FACESORT_EMBEDDER`).
+    /// trouvé) avec le modèle par défaut (ou `FACESORT_EMBEDDER`).
     pub fn load(models_dir: Option<&Path>) -> Result<Self> {
-        Self::load_with(models_dir, models::selected_embedder()?)
+        Self::load_with(models_dir, models::choose_embedder(None, models_dir)?)
+    }
+
+    /// Charge le modèle qui a rempli la base (ou le défaut pour une base vide).
+    pub fn load_for_store(models_dir: Option<&Path>, store: &crate::store::Store) -> Result<Self> {
+        Self::load_with(models_dir, models::choose_embedder(store.embedder_kind()?, models_dir)?)
     }
 
     pub fn load_with(models_dir: Option<&Path>, kind: EmbedderKind) -> Result<Self> {
